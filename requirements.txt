@@ -1,4 +1,4 @@
-mcp-server-fastmcp
+mcp
 plexapi
 requests
 python-dotenv
