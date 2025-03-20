@@ -168,10 +168,6 @@ For detailed logs, set the environment variable:
 DEBUG=true
 ```
 
-## License
-
-MIT License
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
