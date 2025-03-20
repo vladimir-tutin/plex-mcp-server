@@ -3312,12 +3312,6 @@ async def remove_numeric_label(numeric_label: str) -> str:
     except Exception as e:
         return f"Error removing label: {str(e)}"
 
-# Keep the old function for backward compatibility
-@mcp.tool()
-async def remove_123_label() -> str:
-    """Remove the '123' label from the ClaudeTest collection."""
-    return await remove_numeric_label("123")
-
 if __name__ == "__main__":
     # Initialize and run the server
     print("Starting Plex MCP Server...")
