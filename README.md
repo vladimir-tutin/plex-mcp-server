@@ -1,184 +1,127 @@
 # Plex MCP Server
 
-A comprehensive Multi-Chat-Provider (MCP) integration for Plex Media Server that enables AI assistants to interact with your Plex libraries, manage content, and control playback.
+Plex MCP Server is a versatile control panel for your Plex Media Server, allowing AI assistants and other applications to interact with your Plex libraries, collections, media, and users.
 
 ## Features
 
-- **Library Management**: Browse, search, and get detailed information about your Plex libraries
-- **Media Playback**: Start playback on Plex clients or external players
-- **Content Discovery**: Search for media, view recently added content, and browse on-deck items
-- **Metadata Management**: Edit media metadata including titles, summaries, and poster images
-- **User Management**: View user information and activity
-- **Collection & Playlist Management**: Create, edit, and manage collections and playlists
-- **Server Monitoring**: View active sessions, logs, and server status
-
-## Prerequisites
-
-- Plex Media Server (latest version recommended)
-- Plex account with admin privileges
-- Python 3.8+
-- An AI assistant that supports the MCP protocol
+- Comprehensive access to Plex libraries
+- Media search and playback control
+- Collection and playlist management
+- Media metadata editing
+- User management
+- Server monitoring
 
 ## Installation
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/vladimir-tutin/plex-mcp-server.git
-   cd plex-mcp-server
-   ```
-
+1. Clone this repository
 2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+3. Configure your Plex connection:
+   - Create a `.env` file with your Plex URL and token:
    ```
-   pip install -r requirements.txt
+   PLEX_URL=http://your-plex-server:32400
+   PLEX_TOKEN=your-plex-token
+   ```
+   - Alternatively, set environment variables directly:
+   ```bash
+   export PLEX_URL=http://your-plex-server:32400
+   export PLEX_TOKEN=your-plex-token
    ```
 
-3. Configure environment variables (see Configuration section)
+## Running the Server
 
-4. Run the server:
-   ```
-   python plex_mcp_server.py
-   ```
+The server can be launched in two different modes depending on your needs:
 
-## Configuration
+### Command Line Mode (Default)
 
-Configure the server using environment variables:
+Run the server directly from the command line:
 
-### Required Variables
-- `PLEX_URL`: URL of your Plex server (e.g., `http://192.168.1.100:32400`)
-- `PLEX_TOKEN`: Your Plex authentication token
-
-### Alternative Authentication (if token not provided)
-- `PLEX_USERNAME`: Your Plex username
-- `PLEX_PASSWORD`: Your Plex password
-- `PLEX_SERVER_NAME`: Name of your Plex server
-
-## Usage
-
-### Library Management
-
-- `list_libraries`: List all available libraries on your Plex server
-- `search_media`: Search for media across libraries or in a specific library
-- `get_recently_added`: View recently added content
-- `get_on_deck`: View in-progress content
-- `get_library_stats`: Get statistics for a specific library
-- `refresh_library`: Refresh a specific library or all libraries
-- `scan_library`: Scan a specific library or path
-
-### Media Playback
-
-- `start_playback`: Start playback of media on a specified client
-- `control_playback`: Control active playback sessions (play, pause, stop)
-- `get_active_sessions`: View information about current playback sessions
-
-### Metadata Management
-
-- `edit_metadata`: Edit metadata for media items
-- `get_media_poster`: Retrieve a media item's poster image
-- `set_media_poster`: Set a new poster image for a media item
-- `extract_media_images`: Extract all images associated with a media item
-- `delete_media`: Remove items from your Plex library
-
-### Playlists & Collections
-
-- `list_playlists`: List all playlists
-- `create_playlist`: Create a new playlist
-- `add_to_playlist`: Add items to an existing playlist
-- `remove_from_playlist`: Remove items from a playlist
-- `delete_playlist`: Delete a playlist
-- `list_collections`: List all collections
-- `create_collection`: Create a new collection
-- `add_to_collection`: Add items to an existing collection
-- `remove_from_collection`: Remove items from a collection
-- `delete_collection`: Delete a collection
-
-### User Management
-
-- `get_user_info`: Get detailed information about a specific Plex user
-- `get_user_on_deck`: View on-deck items for a specific user
-- `get_user_watch_history`: View watch history for a specific user
-- `list_all_users`: List all users with access to the Plex server
-
-### Server Monitoring
-
-- `get_plex_logs`: Retrieve Plex server logs
-- `get_library_details`: Get detailed information about a specific library
-
-## Examples
-
-### List all libraries
-```python
-await list_libraries()
+```bash
+python plex_mcp_server.py
+# or explicitly specify stdio transport
+python plex_mcp_server.py --transport stdio
 ```
 
-### Search for media
-```python
-await search_media(query="The Matrix", library_name="Movies")
+### Web Server Mode
+
+Run the server as a web service to allow access from web applications:
+
+```bash
+python plex_mcp_server.py --transport sse --host 0.0.0.0 --port 8080
 ```
 
-### Get recently added content
-```python
-await get_recently_added(count=10, library_name="TV Shows")
+In this mode, the server endpoints are:
+- Server URL: `http://[host]:[port]`
+- SSE endpoint: `/sse`
+- Message endpoint: `/messages/`
+
+## Integrating with Claude Desktop or Cursor
+
+You can easily integrate Plex MCP Server with Claude Desktop or other MCP-compatible applications.
+
+### Claude Desktop Integration
+
+1. Open Claude Desktop and go to Settings → Developer → Edit Config
+2. Add the following to your configuration file (replacing paths as needed):
+
+```json
+{
+  "mcpServers": {
+    "plex-server": {
+      "command": "python",
+      "args": [
+        "C:\\path\\to\\plex_mcp_server.py",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "PLEX_URL": "http://your-plex-server:32400",
+        "PLEX_TOKEN": "your-plex-token"
+      }
+    }
+  }
+}
 ```
 
-### Start playback
-```python
-await start_playback(media_title="Inception", client_name="Living Room TV")
-```
+3. Restart Claude Desktop
+4. Look for the tools icon in the input box to access Plex functions
 
-### Edit metadata
-```python
-await edit_metadata(
-    media_title="Star Wars", 
-    library_name="Movies", 
-    new_title="Star Wars: Episode IV - A New Hope",
-    new_year=1977
-)
-```
+### Cursor Integration
 
-### Create a collection
-```python
-await create_collection(
-    collection_title="Marvel Movies",
-    library_name="Movies",
-    item_titles=["Iron Man", "Thor", "Captain America"]
-)
-```
+If you're using Cursor, ensure the Plex MCP Server is running in stdio mode, and Cursor will automatically detect and utilize its functionality.
+
+## Available Tools
+
+Plex MCP Server provides numerous tools for interacting with your Plex server:
+
+- Library management: list, refresh, scan libraries
+- Media operations: search, play, edit metadata
+- Collection management: create, edit, delete collections
+- Playlist handling: create and manage playlists
+- User information: view activity, history, and details
+- Server monitoring: logs, active sessions
+
+## Environment Variables
+
+- `PLEX_URL`: URL of your Plex server (required)
+- `PLEX_TOKEN`: Authentication token for your Plex server (required)
+- `PLEX_USERNAME`: Plex username (optional, alternative to token)
+- `PLEX_PASSWORD`: Plex password (optional, alternative to token)
+- `PLEX_SERVER_NAME`: Name of your Plex server (required if using username/password)
+
+## Restarting the Server
+
+If you make changes to the configuration or the server is unresponsive, restart it using the same command you used to start it initially.
 
 ## Troubleshooting
 
-### Common Issues
+- Verify your Plex server is running and accessible
+- Check that your Plex token is valid
+- Ensure required Python packages are installed
+- Check logs for detailed error information
 
-1. **Connection Problems**:
-   - Verify your Plex server is running
-   - Ensure your PLEX_URL is correct and accessible
-   - Check that your authentication credentials are valid
+## License
 
-2. **Permission Issues**:
-   - Ensure your Plex account has admin privileges
-   - Verify you're using the correct Plex token
-
-3. **Media Not Found**:
-   - Use exact media titles when possible
-   - Try searching with partial titles if exact matches fail
-
-### Debug Mode
-
-For detailed logs, set the environment variable:
-```
-DEBUG=true
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Acknowledgements
-
-- [PlexAPI](https://github.com/pkkid/python-plexapi) - Python bindings for the Plex API
-- [FastMCP](https://github.com/microsoft/mcp) - Multi-Chat-Provider protocol
+[License information]
