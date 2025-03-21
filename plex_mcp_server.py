@@ -3,8 +3,20 @@ import io
 import base64
 import requests
 import time
+import argparse
+
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
+
+# Add dotenv for .env file support
+try:
+    from dotenv import load_dotenv
+    # Load environment variables from .env file
+    load_dotenv()
+    print("Successfully loaded environment variables from .env file")
+except ImportError:
+    print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
+    print("Install with: pip install python-dotenv")
 
 from mcp.server.fastmcp import FastMCP
 from plexapi.server import PlexServer
@@ -16,6 +28,14 @@ from plexapi.collection import Collection
 from plexapi.photo import Photo
 from plexapi.library import Library, LibrarySection
 import traceback
+
+# Add imports for SSE support
+from starlette.applications import Starlette
+from mcp.server.sse import SseServerTransport
+from starlette.requests import Request
+from starlette.routing import Mount, Route
+from mcp.server import Server
+import uvicorn
 
 # Initialize FastMCP server
 mcp = FastMCP("plex-server")
@@ -121,78 +141,36 @@ async def list_libraries() -> str:
         return f"Error listing libraries: {str(e)}"
 
 @mcp.tool()
-async def search_media(query: str, library_name: Optional[str] = None) -> str:
-    """Search for media across all libraries or in a specific library.
+async def search_media(query: str, content_type: str = None) -> str:
+    """Search for media across all libraries.
     
     Args:
         query: Search term to look for
-        library_name: Optional library name to limit search to
+        content_type: Optional content type to limit search to
     """
     try:
         plex = connect_to_plex()
         results = []
-        
-        # Special case for listing all movies
-        if query.lower() in ["*all*", "*movies*", "*all movies*"] and library_name and library_name.lower() == "movies":
-            try:
-                library = plex.library.section(library_name)
-                all_movies = library.all()
-                if all_movies:
-                    output = "All movies in your library:\n\n"
-                    for movie in all_movies[:100]:  # Limit to first 100 movies
-                        year = getattr(movie, 'year', '')
-                        year_str = f" ({year})" if year else ""
-                        output += f"- {movie.title}{year_str}\n"
-                    
-                    if len(all_movies) > 100:
-                        output += f"\n... and {len(all_movies) - 100} more movies (total: {len(all_movies)})\n"
-                    return output
-            except Exception as e:
-                return f"Error listing all movies: {str(e)}"
                 
-        if library_name:
-            try:
-                library = plex.library.section(library_name)
-                
+        if content_type:
                 # Different search approaches for specific media types
-                if library.type == "movie":
-                    # For movies, using title filter is often more accurate
-                    title_matches = library.search(title=query)
-                    # Also try the general query search
-                    query_matches = library.search(query=query)
-                    
-                    # Combine unique results with title matches first
-                    seen_ids = set()
-                    for item in title_matches:
-                        results.append(item)
-                        seen_ids.add(item.ratingKey)
-                    
-                    for item in query_matches:
-                        if item.ratingKey not in seen_ids:
-                            results.append(item)
-                
-                elif library.type == "show":
-                    # For TV shows, we need to search for shows, seasons, and episodes
-                    # Start with show-level matches
-                    show_matches = library.search(query=query)
-                    results.extend(show_matches)
-                    
-                    # Try to find episode matches
-                    try:
-                        episode_matches = library.searchEpisodes(query=query)
-                        if episode_matches:
-                            results.extend(episode_matches)
-                    except:
-                        # searchEpisodes might not be supported in all PlexAPI versions
-                        pass
+                if content_type == "movie":
+                    results = plex.library.search(title=query, libtype="movie")
+                elif content_type == "show":
+                    results = plex.library.search(title=query, libtype="show")
+                elif content_type == "season":
+                    results = plex.library.search(title=query, libtype="season")
+                elif content_type == "episode":
+                    results = plex.library.search(title=query, libtype="episode")
+                elif content_type == "album":
+                    results = plex.library.search(title=query, libtype="album")
+                elif content_type == "track":
+                    results = plex.library.search(title=query, libtype="track")
+                elif content_type == "artist":
+                    results = plex.library.search(title=query, libtype="artist")
                 else:
                     # For other library types
                     results = library.search(query=query)
-                
-            except NotFound:
-                return f"Library '{library_name}' not found."
-            except Exception as e:
-                return f"Error searching in library '{library_name}': {str(e)}"
         else:
             # Global search
             results = plex.search(query=query)
@@ -254,7 +232,7 @@ async def search_media(query: str, library_name: Optional[str] = None) -> str:
         return f"Error searching for media: {str(e)}"
 
 @mcp.tool()
-async def get_recently_added(count: int = 50, library_name: Optional[str] = None) -> str:
+async def get_recently_added(count: int = 50, library_name: str = None) -> str:
     """Get recently added media across all libraries or in a specific library.
     
     Args:
@@ -301,7 +279,7 @@ async def get_recently_added(count: int = 50, library_name: Optional[str] = None
                 return f"Error getting recently added items from library '{library_name}': {str(e)}"
         else:
             # Get recently added across all libraries
-            recently_added = plex.library.recentlyAdded(maxresults=count)
+            recently_added = plex.library.recentlyAdded()
         
         if not recently_added:
             return "No recently added items found."
@@ -439,7 +417,7 @@ async def get_library_stats(library_name: str) -> str:
         return f"Error getting library stats: {str(e)}"
 
 @mcp.tool()
-async def start_playback(media_title: str, client_name: Optional[str] = None, use_external_player: bool = False) -> str:
+async def start_playback(media_title: str, client_name: str = None, use_external_player: bool = False) -> str:
     """Start playback of a media item on a specified client or in the default video player.
     
     Args:
@@ -598,14 +576,13 @@ async def start_playback(media_title: str, client_name: Optional[str] = None, us
     except Exception as e:
         return f"Error starting playback: {str(e)}"
 
-# New functions for metadata management
 @mcp.tool()
-async def edit_metadata(media_title: str, library_name: Optional[str] = None, 
-                        new_title: Optional[str] = None, new_summary: Optional[str] = None, 
-                        new_year: Optional[int] = None, new_rating: Optional[float] = None,
-                        new_genre: Optional[str] = None, remove_genre: Optional[str] = None,
-                        new_director: Optional[str] = None, new_studio: Optional[str] = None,
-                        new_tags: Optional[List[str]] = None) -> str:
+async def edit_metadata(media_title: str, library_name: str = None, 
+                        new_title: str = None, new_summary: str = None, new_rating: float = None,
+                        new_release_date: str = None,  # Add this parameter
+                        new_genre: str = None, remove_genre: str = None,
+                        new_director: str = None, new_studio: str = None,
+                        new_tags: List[str] = None) -> str:
     """Edit metadata for a specific media item.
     
     Args:
@@ -613,8 +590,8 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
         library_name: Optional library name to limit search to
         new_title: New title for the item
         new_summary: New summary/description
-        new_year: New year
         new_rating: New rating (0-10)
+        new_release_date: New release date (YYYY-MM-DD)
         new_genre: New genre to add
         remove_genre: Genre to remove
         new_director: New director to add (movies only)
@@ -628,7 +605,7 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
         if library_name:
             try:
                 library = plex.library.section(library_name)
-                results = library.search(query=media_title)
+                results = library.search(title=media_title)
             except NotFound:
                 return f"Library '{library_name}' not found."
         else:
@@ -643,53 +620,66 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
         media = results[0]
         changes_made = []
         
-        # Create edits dictionary
-        edits = {}
+        # Use the appropriate mixin methods based on metadata field
         if new_title:
-            edits['title'] = new_title
-            changes_made.append(f"title changed to '{new_title}'")
-        if new_summary:
-            edits['summary'] = new_summary
-            changes_made.append("summary updated")
-        if new_year:
-            edits['year'] = new_year
-            changes_made.append(f"year changed to {new_year}")
-        if new_rating is not None:
-            edits['userRating'] = new_rating
-            changes_made.append(f"rating changed to {new_rating}")
-        if new_studio:
-            edits['studio'] = new_studio
-            changes_made.append(f"studio changed to '{new_studio}'")
-        
-        # Apply the basic edits
-        if edits:
             try:
-                media.edit(**edits)
+                media.editTitle(new_title)
+                changes_made.append(f"title changed to '{new_title}'")
             except Exception as e:
-                return f"Error applying basic edits: {str(e)}"
+                return f"Error setting title: {str(e)}"
+                
+        if new_summary:
+            try:
+                media.editSummary(new_summary)
+                changes_made.append("summary updated")
+            except Exception as e:
+                return f"Error setting summary: {str(e)}"
+
+        if new_rating is not None:
+            try:
+                media.rate(new_rating)
+                changes_made.append(f"rating changed to {new_rating}")
+            except Exception as e:
+                return f"Error setting rating: {str(e)}"
+                
+        if new_studio:
+            try:
+                if hasattr(media, 'editStudio'):
+                    media.editStudio(new_studio)
+                    changes_made.append(f"studio changed to '{new_studio}'")
+                else:
+                    return f"This media type doesn't support changing the studio"
+            except Exception as e:
+                return f"Error setting studio: {str(e)}"
         
-        # Handle genres (add/remove)
+        # Handle genres using the appropriate mixin methods
         if new_genre:
             try:
-                # Check if genre already exists
-                existing_genres = [g.tag.lower() for g in media.genres]
-                if new_genre.lower() not in existing_genres:
-                    media.addGenre(new_genre)
-                    changes_made.append(f"added genre '{new_genre}'")
+                if hasattr(media, 'addGenre'):
+                    # Check if genre already exists
+                    existing_genres = [g.tag.lower() for g in getattr(media, 'genres', [])]
+                    if new_genre.lower() not in existing_genres:
+                        media.addGenre(new_genre)
+                        changes_made.append(f"added genre '{new_genre}'")
+                else:
+                    return f"This media type doesn't support adding genres"
             except Exception as e:
                 return f"Error adding genre: {str(e)}"
                 
         if remove_genre:
             try:
-                # Find the genre object by tag name
-                matching_genres = [g for g in media.genres if g.tag.lower() == remove_genre.lower()]
-                if matching_genres:
-                    media.removeGenre(matching_genres[0])
-                    changes_made.append(f"removed genre '{remove_genre}'")
+                if hasattr(media, 'removeGenre'):
+                    # Find the genre object by tag name
+                    matching_genres = [g for g in media.genres if g.tag.lower() == remove_genre.lower()]
+                    if matching_genres:
+                        media.removeGenre(matching_genres[0])
+                        changes_made.append(f"removed genre '{remove_genre}'")
+                else:
+                    return f"This media type doesn't support removing genres"
             except Exception as e:
                 return f"Error removing genre: {str(e)}"
         
-        # Handle directors (movies only)
+        # Handle directors using the appropriate mixin methods
         if new_director and hasattr(media, 'addDirector'):
             try:
                 # Check if director already exists
@@ -700,15 +690,33 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
             except Exception as e:
                 return f"Error adding director: {str(e)}"
         
-        # Handle tags
+
+                # Add handling for release date
+        if new_release_date:
+            try:
+                # Parse the date string (YYYY-MM-DD) to a datetime object
+                from datetime import datetime
+                date_obj = datetime.strptime(new_release_date, '%Y-%m-%d')
+                if hasattr(media, 'editOriginallyAvailable'):
+                    media.editOriginallyAvailable(date_obj)
+                    changes_made.append(f"updated release date to '{new_release_date}'")
+                else:
+                    return f"This media type doesn't support editing release dates"
+            except Exception as e:
+                return f"Error updating release date: {str(e)}"
+            
+        # Handle tags/labels
         if new_tags:
             for tag in new_tags:
                 try:
-                    # Check if tag already exists
-                    existing_labels = [l.tag.lower() for l in getattr(media, 'labels', [])]
-                    if tag.lower() not in existing_labels:
-                        media.addLabel(tag)
-                        changes_made.append(f"added tag '{tag}'")
+                    if hasattr(media, 'addLabel'):
+                        # Check if tag already exists
+                        existing_labels = [l.tag.lower() for l in getattr(media, 'labels', [])]
+                        if tag.lower() not in existing_labels:
+                            media.addLabel(tag)
+                            changes_made.append(f"added tag '{tag}'")
+                    else:
+                        return f"This media type doesn't support adding tags/labels"
                 except Exception as e:
                     return f"Error adding tag '{tag}': {str(e)}"
         
@@ -716,7 +724,10 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
         try:
             media.refresh()
         except Exception as e:
-            return f"Changes were made but error occurred during refresh: {str(e)}"
+            # Changes might still be applied even if refresh fails
+            pass
+        
+
         
         if not changes_made:
             return f"No changes were made to '{media.title}'."
@@ -726,8 +737,8 @@ async def edit_metadata(media_title: str, library_name: Optional[str] = None,
         return f"Error editing metadata: {str(e)}"
 
 @mcp.tool()
-async def get_media_poster(media_title: str, library_name: Optional[str] = None, 
-                           output_path: Optional[str] = None, output_format: str = "base64") -> str:
+async def get_media_poster(media_title: str, library_name: str = None, 
+                           output_path: str = None, output_format: str = "base64") -> str:
     """Get the poster image for a specific media item.
     
     Args:
@@ -870,7 +881,7 @@ async def get_media_poster(media_title: str, library_name: Optional[str] = None,
 
 @mcp.tool()
 async def set_media_poster(media_title: str, poster_path: str, 
-                           library_name: Optional[str] = None) -> str:
+                           library_name: str = None) -> str:
     """Set a new poster image for a specific media item.
     
     Args:
@@ -912,7 +923,7 @@ async def set_media_poster(media_title: str, poster_path: str,
         return f"Error setting poster: {str(e)}"
 
 @mcp.tool()
-async def extract_media_images(media_title: str, library_name: Optional[str] = None, 
+async def extract_media_images(media_title: str, library_name: str = None, 
                               output_dir: str = "./", image_types: List[str] = ["poster", "art"]) -> str:
     """Extract all images associated with a media item.
     
@@ -996,7 +1007,7 @@ async def extract_media_images(media_title: str, library_name: Optional[str] = N
 
 # Functions for content management
 @mcp.tool()
-async def delete_media(media_title: str, library_name: Optional[str] = None, 
+async def delete_media(media_title: str, library_name:str = None, 
                        delete_files: bool = False) -> str:
     """Delete a media item from the Plex library.
     
@@ -1088,8 +1099,12 @@ async def scan_library(library_name: str, path: Optional[str] = None) -> str:
 
 # Functions for sessions and playback
 @mcp.tool()
-async def get_active_sessions() -> str:
-    """Get information about current playback sessions, including IP addresses."""
+async def get_active_sessions(unused: str = None) -> str:
+    """Get information about current playback sessions, including IP addresses.
+    
+    Args:
+        unused: Unused parameter to satisfy the function signature
+    """
     try:
         plex = connect_to_plex()
         sessions = plex.sessions()
@@ -1627,7 +1642,7 @@ async def create_playlist(title: str, item_titles: List[str],
 
 @mcp.tool()
 async def add_to_playlist(playlist_title: str, item_titles: List[str], 
-                          library_name: Optional[str] = None) -> str:
+                          library_name: str = None) -> str:
     """Add items to an existing playlist.
     
     Args:
@@ -1752,7 +1767,7 @@ async def delete_playlist(playlist_title: str) -> str:
         return f"Error deleting playlist: {str(e)}"
 
 @mcp.tool()
-async def list_collections(library_name: Optional[str] = None) -> str:
+async def list_collections(library_name: str = None) -> str:
     """List all collections on the Plex server or in a specific library.
     
     Args:
@@ -2099,15 +2114,15 @@ async def edit_collection_summary(collection_title: str, library_name: str, summ
 async def edit_collection(
     collection_title: str, 
     library_name: str,
-    new_title: Optional[str] = None,
-    new_sort_title: Optional[str] = None,
-    new_content_rating: Optional[str] = None,
-    new_labels: Optional[List[str]] = None,
-    add_labels: Optional[List[str]] = None,
-    remove_labels: Optional[List[str]] = None,
-    poster_path: Optional[str] = None,
-    background_path: Optional[str] = None,
-    new_advanced_settings: Optional[Dict[str, Any]] = None
+    new_title: str = None,
+    new_sort_title: str = None,
+    new_content_rating: str = None,
+    new_labels: List[str] = None,
+    add_labels: List[str] = None,
+    remove_labels: List[str] = None,
+    poster_path: str = None,
+    background_path: str = None,
+    new_advanced_settings: Dict[str, Any] = None
 ) -> str:
     """Comprehensively edit a collection's attributes.
     
@@ -3312,8 +3327,53 @@ async def remove_numeric_label(numeric_label: str) -> str:
     except Exception as e:
         return f"Error removing label: {str(e)}"
 
+
+def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
+    """Create a Starlette application that can serve the provided mcp server with SSE."""
+    sse = SseServerTransport("/messages/")
+
+    async def handle_sse(request: Request) -> None:
+        async with sse.connect_sse(
+            request.scope,
+            request.receive,
+            request._send,  # noqa: SLF001
+        ) as (read_stream, write_stream):
+            await mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp_server.create_initialization_options(),
+            )
+
+    return Starlette(
+        debug=debug,
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+        ],
+    )
+
 if __name__ == "__main__":
+    # Setup command line arguments
+    parser = argparse.ArgumentParser(description='Run Plex MCP Server')
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
+                        help='Transport method to use (stdio or sse)')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (for SSE)')
+    parser.add_argument('--port', type=int, default=8080, help='Port to listen on (for SSE)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    
+    args = parser.parse_args()
+    
     # Initialize and run the server
-    print("Starting Plex MCP Server...")
+    print(f"Starting Plex MCP Server with {args.transport} transport...")
     print("Set PLEX_URL and PLEX_TOKEN environment variables for connection")
-    mcp.run(transport='stdio')
+    
+    if args.transport == 'stdio':
+        # Run with stdio transport (original method)
+        mcp.run(transport='stdio')
+    else:
+        # Run with SSE transport
+        mcp_server = mcp._mcp_server  # Access the underlying MCP server
+        starlette_app = create_starlette_app(mcp_server, debug=args.debug)
+        print(f"Starting SSE server on http://{args.host}:{args.port}")
+        print("Access the SSE endpoint at /sse")
+        uvicorn.run(starlette_app, host=args.host, port=args.port)
