@@ -179,7 +179,7 @@ async def edit_metadata(media_title: str, library_name: str = None,
             except NotFound:
                 return f"Library '{library_name}' not found."
         else:
-            results = plex.search(query=media_title)
+                results = plex.search(query=media_title)
         
         if not results:
             return f"No media found matching '{media_title}'."
@@ -305,62 +305,6 @@ async def edit_metadata(media_title: str, library_name: str = None,
         return f"Successfully updated metadata for '{media.title}'. Changes: {', '.join(changes_made)}."
     except Exception as e:
         return f"Error editing metadata: {str(e)}"
-
-@mcp.tool()
-async def set_media_poster(media_title: str, poster_path: str = None, poster_url: str = None,
-                           library_name: str = None) -> str:
-    """Set a new poster image for a specific media item.
-    
-    Args:
-        media_title: Title of the media to set the poster for
-        poster_path: Path to the image file to use as poster
-        poster_url: URL to the image file to use as poster
-        library_name: Optional library name to limit search to
-    """
-    try:
-        if not poster_path and not poster_url:
-            return "Error: Either poster_path or poster_url must be provided."
-            
-        if poster_path and poster_url:
-            return "Error: Please provide either poster_path OR poster_url, not both."
-            
-        plex = connect_to_plex()
-        
-        # Search for the media
-        if library_name:
-            try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
-        else:
-            results = plex.search(title=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
-        if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
-        
-        media = results[0]
-        
-        # Set poster via path
-        if poster_path:
-            # Check if the poster file exists
-            if not os.path.isfile(poster_path):
-                return f"Poster file not found: {poster_path}"
-            
-            # Upload the new poster
-            with open(poster_path, 'rb') as f:
-                media.uploadPoster(filepath=poster_path)
-        
-        # Set poster via URL
-        elif poster_url:
-            media.uploadPoster(url=poster_url)
-        
-        return f"Successfully set new poster for '{media.title}'."
-    except Exception as e:
-        return f"Error setting poster: {str(e)}"
 
 @mcp.tool()
 async def extract_media_images(media_title: str, library_name: str = None, 
@@ -550,3 +494,301 @@ async def delete_media(media_title: str, library_name: str = None) -> str:
             
     except Exception as e:
         return f"Error deleting media: {str(e)}"
+
+@mcp.tool()
+async def get_media_artwork(media_title: str, library_name: str = None, 
+                           art_type: str = "poster", output_format: str = "base64",
+                           output_path: str = None) -> dict:
+    """Get artwork for a specific media item.
+    
+    Args:
+        media_title: Title of the media to get artwork for
+        library_name: Optional library name to limit search to
+        art_type: Type of artwork to get (poster, background, art, logo)
+        output_format: Format to return image data in (base64, url, or file)
+        output_path: Optional path to save the image to a file
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Search for the media
+        if library_name:
+            try:
+                library = plex.library.section(library_name)
+                results = library.search(title=media_title)
+            except NotFound:
+                return {"error": f"Library '{library_name}' not found."}
+        else:
+            results = plex.search(title=media_title)
+        
+        if not results:
+            return {"error": f"No media found matching '{media_title}'."}
+        
+        if len(results) > 1:
+            return {"error": f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."}
+        
+        media = results[0]
+        
+        # Normalize art type
+        art_type = art_type.lower()
+        
+        # Map art types to their URL attributes
+        art_map = {
+            "poster": "thumbUrl",
+            "thumbnail": "thumbUrl",
+            "thumb": "thumbUrl",
+            "background": "artUrl",
+            "art": "artUrl", 
+            "logo": "logoUrl",
+            "banner": "bannerUrl"
+        }
+        
+        if art_type not in art_map:
+            return {"error": f"Invalid art type: {art_type}. Supported types: {', '.join(art_map.keys())}"}
+        
+        # Get URL for the requested art type
+        url_attr = art_map[art_type]
+        if not hasattr(media, url_attr):
+            return {"error": f"This media item doesn't have {art_type} artwork."}
+        
+        artwork_url = getattr(media, url_attr)
+        if not artwork_url:
+            return {"error": f"No {art_type} artwork found for '{media_title}'."}
+        
+        # Get available artwork versions based on type
+        available_versions = []
+        if art_type in ["poster", "thumb", "thumbnail"]:
+            if hasattr(media, "posters") and callable(getattr(media, "posters")):
+                try:
+                    available_versions = media.posters()
+                except:
+                    pass
+        elif art_type in ["background", "art"]:
+            if hasattr(media, "arts") and callable(getattr(media, "arts")):
+                try:
+                    available_versions = media.arts()
+                except:
+                    pass
+        elif art_type == "logo":
+            if hasattr(media, "logos") and callable(getattr(media, "logos")):
+                try:
+                    available_versions = media.logos()
+                except:
+                    pass
+                    
+        # Handle different output formats
+        if output_format == "url":
+            return {
+                "filename": f"{media.title}_{art_type}.jpg",
+                "type": art_type,
+                "url": artwork_url,
+                "versions_available": len(available_versions)
+            }
+        
+        # Get the image data
+        import requests
+        response = requests.get(artwork_url)
+        
+        if response.status_code != 200:
+            return {"error": f"Failed to download {art_type} image: HTTP {response.status_code}"}
+        
+        image_data = response.content
+        
+        # Handle file output
+        if output_format == "file" or output_path:
+            # Determine output path
+            file_path = output_path
+            if not file_path:
+                file_path = f"{media.title}_{art_type}.jpg"
+                
+            # Save the file
+            try:
+                with open(file_path, 'wb') as f:
+                    f.write(image_data)
+                return {
+                    "filename": file_path,
+                    "type": art_type,
+                    "path": os.path.abspath(file_path),
+                    "versions_available": len(available_versions)
+                }
+            except Exception as e:
+                return {"error": f"Failed to save image file: {str(e)}"}
+        
+        # Handle base64 output (default)
+        if output_format == "base64":
+            import base64
+            b64_data = base64.b64encode(image_data).decode('utf-8')
+            return {
+                "filename": f"{media.title}_{art_type}.jpg",
+                "type": art_type,
+                "base64": b64_data,
+                "versions_available": len(available_versions)
+            }
+        
+        return {"error": f"Invalid output format: {output_format}"}
+        
+    except Exception as e:
+        return {"error": f"Error getting {art_type} artwork: {str(e)}"}
+
+@mcp.tool()
+async def set_media_artwork(media_title: str, library_name: str = None,
+                          art_type: str = "poster", 
+                          filepath: str = None, url: str = None,
+                          lock: bool = False) -> str:
+    """Set artwork for a specific media item.
+    
+    Args:
+        media_title: Title of the media to set artwork for
+        library_name: Optional library name to limit search to
+        art_type: Type of artwork to set (poster, background/art, logo)
+        filepath: Path to the local image file
+        url: URL to the image file
+        lock: Whether to lock the artwork to prevent Plex from changing it
+    """
+    try:
+        if not filepath and not url:
+            return "Error: Either filepath or url must be provided."
+            
+        if filepath and url:
+            return "Error: Please provide either filepath OR url, not both."
+        
+        # Normalize art type
+        art_type = art_type.lower()
+        valid_types = ["poster", "background", "art", "logo"]
+        
+        if art_type not in valid_types:
+            return f"Invalid art type: {art_type}. Supported types: {', '.join(valid_types)}"
+        
+        # Map art types to their upload methods
+        upload_map = {
+            "poster": "uploadPoster",
+            "background": "uploadArt",
+            "art": "uploadArt",
+            "logo": "uploadLogo"
+        }
+        
+        # Map art types to their lock methods
+        lock_map = {
+            "poster": "lockPoster",
+            "background": "lockArt",
+            "art": "lockArt",
+            "logo": "lockLogo"
+        }
+        
+        plex = connect_to_plex()
+        
+        # Search for the media
+        if library_name:
+            try:
+                library = plex.library.section(library_name)
+                results = library.search(title=media_title)
+            except NotFound:
+                return f"Library '{library_name}' not found."
+        else:
+            results = plex.search(title=media_title)
+        
+        if not results:
+            return f"No media found matching '{media_title}'."
+        
+        if len(results) > 1:
+            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+        
+        media = results[0]
+        
+        # Check if the object supports this art type
+        upload_method = upload_map.get(art_type)
+        if not hasattr(media, upload_method):
+            return f"This media item doesn't support setting {art_type} artwork."
+        
+        # Upload the artwork
+        upload_fn = getattr(media, upload_method)
+        
+        if filepath:
+            if not os.path.isfile(filepath):
+                return f"Artwork file not found: {filepath}"
+            upload_fn(filepath=filepath)
+        else:  # url
+            upload_fn(url=url)
+        
+        # Lock the artwork if requested
+        if lock:
+            lock_method = lock_map.get(art_type)
+            if hasattr(media, lock_method):
+                lock_fn = getattr(media, lock_method)
+                lock_fn()
+                return f"Successfully set and locked {art_type} artwork for '{media.title}'."
+        
+        return f"Successfully set {art_type} artwork for '{media.title}'."
+    except Exception as e:
+        return f"Error setting {art_type} artwork: {str(e)}"
+
+@mcp.tool()
+async def list_available_artwork(media_title: str, library_name: str = None, art_type: str = "poster") -> str:
+    """List all available artwork for a specific media item.
+    
+    Args:
+        media_title: Title of the media to list artwork for
+        library_name: Optional library name to limit search to
+        art_type: Type of artwork to list (poster, background/art, logo)
+    """
+    try:
+        # Normalize art type
+        art_type = art_type.lower()
+        
+        # Map art types to their methods that return available artwork
+        art_methods = {
+            "poster": "posters",
+            "background": "arts", 
+            "art": "arts",
+            "logo": "logos"
+        }
+        
+        if art_type not in art_methods:
+            return f"Invalid art type: {art_type}. Supported types: {', '.join(art_methods.keys())}"
+        
+        plex = connect_to_plex()
+        
+        # Search for the media
+        if library_name:
+            try:
+                library = plex.library.section(library_name)
+                results = library.search(title=media_title)
+            except NotFound:
+                return f"Library '{library_name}' not found."
+        else:
+            results = plex.search(title=media_title)
+        
+        if not results:
+            return f"No media found matching '{media_title}'."
+        
+        if len(results) > 1:
+            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+        
+        media = results[0]
+        
+        # Check if the object supports this art type
+        art_method = art_methods.get(art_type)
+        if not hasattr(media, art_method):
+            return f"This media item doesn't support {art_type} artwork."
+        
+        # Get available artwork
+        get_art_fn = getattr(media, art_method)
+        artwork_list = get_art_fn()
+        
+        if not artwork_list:
+            return f"No {art_type} artwork found for '{media.title}'."
+        
+        # Build response
+        output = f"Available {art_type} artwork for '{media.title}':\n\n"
+        
+        for i, art in enumerate(artwork_list, 1):
+            provider = getattr(art, 'provider', 'Unknown')
+            preview_url = getattr(art, 'key', 'No URL available')
+            selected = "(Selected)" if getattr(art, 'selected', False) else ""
+            
+            output += f"{i}. Provider: {provider} {selected}\n"
+            output += f"   URL: {preview_url}\n\n"
+            
+        return output
+    except Exception as e:
+        return f"Error listing {art_type} artwork: {str(e)}"

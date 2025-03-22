@@ -33,7 +33,16 @@ from modules.sessions import (
 )
 # Server module functions
 from modules.server import (
-    get_plex_logs
+    get_plex_logs,
+    get_server_info,
+    get_server_activities,
+    get_server_bandwidth,
+    get_server_resources,
+    get_server_butler_tasks,
+    get_server_sessions_stats,
+    get_server_alerts,
+    toggle_butler_task,
+    run_butler_task
 )
 # Playlist module functions
 from modules.playlist import (
@@ -55,15 +64,18 @@ from modules.media import (
     search_media,
     get_media_details,
     edit_metadata,
-    set_media_poster,
     extract_media_images,
-    delete_media
+    delete_media,
+    get_media_artwork,
+    set_media_artwork,
+    list_available_artwork  
+)  
+# Client module functions
+from modules.client import (
+    list_clients, get_client_details, get_client_timelines,
+    get_active_clients, start_playback, control_playback,
+    navigate_client, set_streams
 )
-# Playback module functions
-from modules.playback import (
-    start_playback
-)
-
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can serve the provided mcp server with SSE."""
@@ -113,4 +125,4 @@ if __name__ == "__main__":
         starlette_app = create_starlette_app(mcp_server, debug=args.debug)
         print(f"Starting SSE server on http://{args.host}:{args.port}")
         print("Access the SSE endpoint at /sse")
-        uvicorn.run(starlette_app, host=args.host, port=args.port) 
+        uvicorn.run(starlette_app, host=args.host, port=args.port)
