@@ -87,11 +87,7 @@ You can easily integrate Plex MCP Server with Claude Desktop or other MCP-compat
 
 3. Restart Claude Desktop
 4. Look for the tools icon in the input box to access Plex functions
-
-### Cursor Integration
-
-If you're using Cursor, ensure the Plex MCP Server is running in stdio mode, and Cursor will automatically detect and utilize its functionality.
-
+   
 ## Available Tools
 
 Plex MCP Server provides numerous tools for interacting with your Plex server:
