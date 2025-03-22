@@ -79,7 +79,7 @@ def extract_log_from_zip(zip_ref, log_file_name):
     for file in all_files:
         if log_file_name.lower() in os.path.basename(file).lower():
             log_file_path = file
-            
+            break
             
             if not log_file_path:
                 raise ValueError(f"Could not find log file for type: {log_file_name}. Available files: {', '.join(all_files)}")
