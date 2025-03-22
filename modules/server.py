@@ -20,7 +20,7 @@ async def get_plex_logs(num_lines: int = 100, log_type: str = "server") -> str:
         import traceback
         
         plex = connect_to_plex()
-        
+            
         # Map common log type names to the actual file names
         log_type_map = {
             'server': 'Plex Media Server.log',
@@ -30,7 +30,7 @@ async def get_plex_logs(num_lines: int = 100, log_type: str = "server") -> str:
         }
         
         log_file_name = log_type_map.get(log_type.lower(), log_type)
-        
+            
         # Download logs from the Plex server
         logs_path_or_data = plex.downloadLogs()
         
@@ -73,17 +73,17 @@ def extract_log_from_zip(zip_ref, log_file_name):
     """Extract the requested log file content from a zip file object."""
     # List all files in the zip
     all_files = zip_ref.namelist()
-    
+            
     # Find the requested log file
     log_file_path = None
     for file in all_files:
         if log_file_name.lower() in os.path.basename(file).lower():
             log_file_path = file
-            break
-    
-    if not log_file_path:
-        raise ValueError(f"Could not find log file for type: {log_file_name}. Available files: {', '.join(all_files)}")
-    
+            
+            
+            if not log_file_path:
+                raise ValueError(f"Could not find log file for type: {log_file_name}. Available files: {', '.join(all_files)}")
+           
     # Read the log file content
     with zip_ref.open(log_file_path) as f:
         log_content = f.read().decode('utf-8', errors='ignore')
@@ -255,8 +255,8 @@ async def get_server_resources() -> Dict[str, Any]:
                 "metric": key,
                 "value": value
             })
-        
-        return result
+            
+            return result
     except Exception as e:
         return {"error": str(e)}
 

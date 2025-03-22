@@ -123,13 +123,14 @@ async def list_playlists(library_name: str = None, content_type: str = None) -> 
 
 @mcp.tool()
 async def create_playlist(playlist_title: str, item_titles: List[str], 
-                          library_name: str = None) -> str:
+                          library_name: str = None, summary: str = None) -> str:
     """Create a new playlist with specified items.
     
     Args:
         playlist_title: Title for the new playlist
         item_titles: List of media titles to include in the playlist
         library_name: Optional library name to limit search to
+        summary: Optional summary description for the playlist
     """
     try:
         plex = connect_to_plex()
@@ -176,14 +177,150 @@ async def create_playlist(playlist_title: str, item_titles: List[str],
         # Now create the playlist with the actual media objects
         playlist = Playlist.create(plex, title=playlist_title, items=media_items)
         
+        # Set the summary if provided
+        if summary:
+            playlist.edit(summary=summary)
+        
         # Report results
         result = f"Successfully created playlist '{playlist_title}' with {len(media_items)} items."
+        if summary:
+            result += f"\nSummary: {summary}"
         if not_found:
             result += f"\nThe following items were not found: {', '.join(not_found)}"
         
         return result
     except Exception as e:
         return f"Error creating playlist: {str(e)}"
+
+@mcp.tool()
+async def edit_playlist(playlist_title: str, new_title: str = None, 
+                        new_summary: str = None) -> str:
+    """Edit a playlist's details such as title and summary.
+    
+    Args:
+        playlist_title: Title of the playlist to edit
+        new_title: Optional new title for the playlist
+        new_summary: Optional new summary for the playlist
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Find the playlist
+        playlists = plex.playlists()
+        target_playlist = None
+        
+        for playlist in playlists:
+            if playlist.title.lower() == playlist_title.lower():
+                target_playlist = playlist
+                break
+        
+        if not target_playlist:
+            return f"Playlist '{playlist_title}' not found."
+        
+        # Check if a new title would conflict with existing playlists
+        if new_title and new_title.lower() != playlist_title.lower():
+            for playlist in playlists:
+                if playlist.title.lower() == new_title.lower():
+                    return f"A playlist with the title '{new_title}' already exists. Please choose a different title."
+        
+        # Perform the edits
+        if new_title or new_summary:
+            target_playlist.edit(title=new_title, summary=new_summary)
+            
+            changes = []
+            if new_title:
+                changes.append(f"title to '{new_title}'")
+            if new_summary:
+                changes.append(f"summary to '{new_summary}'")
+            
+            return f"Successfully updated playlist '{playlist_title}': {', '.join(changes)}."
+        else:
+            return "No changes specified for the playlist."
+    
+    except Exception as e:
+        return f"Error editing playlist: {str(e)}"
+
+@mcp.tool()
+async def upload_playlist_poster(playlist_title: str, poster_url: str = None, 
+                                poster_filepath: str = None) -> str:
+    """Upload a poster image for a playlist.
+    
+    Args:
+        playlist_title: Title of the playlist to set poster for
+        poster_url: URL to an image to use as poster
+        poster_filepath: Local file path to an image to use as poster
+    """
+    try:
+        if not poster_url and not poster_filepath:
+            return "You must provide either a poster URL or a poster file path."
+        
+        plex = connect_to_plex()
+        
+        # Find the playlist
+        playlists = plex.playlists()
+        target_playlist = None
+        
+        for playlist in playlists:
+            if playlist.title.lower() == playlist_title.lower():
+                target_playlist = playlist
+                break
+        
+        if not target_playlist:
+            return f"Playlist '{playlist_title}' not found."
+        
+        # Upload the poster
+        if poster_url:
+            target_playlist.uploadPoster(url=poster_url)
+            return f"Successfully uploaded poster for playlist '{playlist_title}' from URL."
+        elif poster_filepath:
+            target_playlist.uploadPoster(filepath=poster_filepath)
+            return f"Successfully uploaded poster for playlist '{playlist_title}' from file."
+    
+    except Exception as e:
+        return f"Error uploading playlist poster: {str(e)}"
+
+@mcp.tool()
+async def copy_playlist_to_user(playlist_title: str, username: str) -> str:
+    """Copy a playlist to another user account.
+    
+    Args:
+        playlist_title: Title of the playlist to copy
+        username: Username of the user to copy the playlist to
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Find the playlist
+        playlists = plex.playlists()
+        target_playlist = None
+        
+        for playlist in playlists:
+            if playlist.title.lower() == playlist_title.lower():
+                target_playlist = playlist
+                break
+        
+        if not target_playlist:
+            return f"Playlist '{playlist_title}' not found."
+        
+        # Find the user
+        users = plex.myPlexAccount().users()
+        target_user = None
+        
+        for user in users:
+            if user.username.lower() == username.lower() or user.email.lower() == username.lower() or user.title.lower() == username.lower():
+                target_user = user
+                break
+        
+        if not target_user:
+            return f"User '{username}' not found."
+        
+        # Copy the playlist to the user
+        target_playlist.copyToUser(target_user)
+        
+        return f"Successfully copied playlist '{playlist_title}' to user '{username}'."
+    
+    except Exception as e:
+        return f"Error copying playlist to user: {str(e)}"
 
 @mcp.tool()
 async def add_to_playlist(playlist_title: str, item_titles: List[str], 

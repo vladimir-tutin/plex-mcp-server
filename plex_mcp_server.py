@@ -17,7 +17,8 @@ from modules.library import (
     refresh_library,
     scan_library,
     get_library_details,
-    get_recently_added
+    get_recently_added,
+    get_library_contents
 )
 # User module functions
 from modules.user import (
@@ -49,7 +50,10 @@ from modules.playlist import (
     create_playlist,
     delete_playlist,
     add_to_playlist,
-    remove_from_playlist
+    remove_from_playlist,
+    edit_playlist,
+    upload_playlist_poster,
+    copy_playlist_to_user
 )
 # Collection module functions
 from modules.collection import (

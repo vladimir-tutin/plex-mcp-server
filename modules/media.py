@@ -573,8 +573,8 @@ async def get_media_artwork(media_title: str, library_name: str = None,
             if hasattr(media, "logos") and callable(getattr(media, "logos")):
                 try:
                     available_versions = media.logos()
-                except:
-                    pass
+                    except:
+                        pass
                     
         # Handle different output formats
         if output_format == "url":

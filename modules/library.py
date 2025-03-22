@@ -402,3 +402,101 @@ async def get_recently_added(count: int = 50, library_name: str = None) -> str:
         return result
     except Exception as e:
         return f"Error getting recently added items: {str(e)}"
+
+@mcp.tool()
+async def get_library_contents(library_name: str, limit: int = 100, offset: int = 0) -> str:
+    """Get the full contents of a specific library.
+    
+    Args:
+        library_name: Name of the library to get contents from
+        limit: Maximum number of items to return (default: 100)
+        offset: Number of items to skip (default: 0)
+    
+    Returns:
+        String listing all items in the library
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Get all library sections
+        all_sections = plex.library.sections()
+        target_section = None
+        
+        # Find the section with the matching name (case-insensitive)
+        for section in all_sections:
+            if section.title.lower() == library_name.lower():
+                target_section = section
+                break
+        
+        if not target_section:
+            return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+        
+        # Get all items in the library
+        all_items = target_section.all()
+        total_items = len(all_items)
+        
+        # Apply pagination
+        paginated_items = all_items[offset:offset+limit]
+        
+        # Format the output
+        result = f"Contents of library '{target_section.title}' (showing {len(paginated_items)} of {total_items} items):\n\n"
+        
+        # Output based on library type
+        if target_section.type == 'movie':
+            for item in paginated_items:
+                year = getattr(item, 'year', 'Unknown')
+                duration = getattr(item, 'duration', 0)
+                # Convert duration from milliseconds to hours and minutes
+                hours, remainder = divmod(duration // 1000, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                
+                # Get resolution
+                media_info = ""
+                if hasattr(item, 'media') and item.media:
+                    for media in item.media:
+                        resolution = getattr(media, 'videoResolution', '')
+                        codec = getattr(media, 'videoCodec', '')
+                        if resolution and codec:
+                            media_info = f" [{resolution} {codec}]"
+                            break
+                
+                # Check if watched
+                watched = "✓" if getattr(item, 'viewCount', 0) > 0 else " "
+                
+                result += f"{watched} {item.title} ({year}) - {hours}h {minutes}m{media_info}\n"
+        
+        elif target_section.type == 'show':
+            for item in paginated_items:
+                year = getattr(item, 'year', 'Unknown')
+                season_count = len(item.seasons())
+                episode_count = sum(len(season.episodes()) for season in item.seasons())
+                
+                # Check if all episodes are watched
+                unwatched = item.unwatched()
+                status = "✓" if len(unwatched) == 0 and episode_count > 0 else " "
+                
+                result += f"{status} {item.title} ({year}) - {season_count} seasons, {episode_count} episodes\n"
+        
+        elif target_section.type == 'artist':
+            for item in paginated_items:
+                album_count = len(item.albums())
+                track_count = sum(len(album.tracks()) for album in item.albums())
+                
+                result += f"- {item.title} - {album_count} albums, {track_count} tracks\n"
+        
+        else:
+            # Generic handler for other types
+            for item in paginated_items:
+                result += f"- {item.title}\n"
+        
+        # Add pagination info
+        if total_items > limit:
+            result += f"\nShowing items {offset+1}-{min(offset+limit, total_items)} of {total_items}."
+            if offset + limit < total_items:
+                result += f" Use offset={offset+limit} to see the next page."
+            if offset > 0:
+                result += f" Use offset={max(0, offset-limit)} to see the previous page."
+        
+        return result
+    except Exception as e:
+        return f"Error getting library contents: {str(e)}"

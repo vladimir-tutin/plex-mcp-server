@@ -1,6 +1,6 @@
 from typing import Optional
 from modules import mcp, connect_to_plex
-
+from plexapi.exceptions import NotFound # type: ignore
 # Functions for sessions and playback
 @mcp.tool()
 async def get_active_sessions(unused: str = None) -> str:
