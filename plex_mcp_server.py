@@ -47,13 +47,17 @@ from modules.server import (
 )
 # Playlist module functions
 from modules.playlist import (
+    list_playlists,
     create_playlist,
     delete_playlist,
     add_to_playlist,
     remove_from_playlist,
     edit_playlist,
     upload_playlist_poster,
-    copy_playlist_to_user
+    copy_playlist_to_user,
+    add_track_by_key,
+    browse_tracks,
+    get_playlist_tracks
 )
 # Collection module functions
 from modules.collection import (
