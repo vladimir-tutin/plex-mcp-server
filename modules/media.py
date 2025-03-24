@@ -3,9 +3,10 @@ from typing import List
 from plexapi.exceptions import NotFound # type: ignore
 import base64
 import os
+import json
 
 @mcp.tool()
-async def search_media(query: str, content_type: str = None) -> str:
+async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
     
     Args:
@@ -17,15 +18,29 @@ async def search_media(query: str, content_type: str = None) -> str:
         results = []
                 
         if content_type in ["movie", "show", "season", "episode", "album", "track", "artist"]:
-                results = plex.library.search(title=query, libtype=content_type)
+            # For audio content, ensure we search specifically in music libraries
+            if content_type in ["album", "track", "artist"]:
+                # Get all music libraries
+                music_libraries = [section for section in plex.library.sections() if section.type == 'artist']
+                
+                # Search in each music library
+                results = []
+                for library in music_libraries:
+                    lib_results = library.search(query=query, libtype=content_type)
+                    results.extend(lib_results)
+            else:
+                results = plex.library.search(query=query, libtype=content_type)
         else:
             # Global search
-            results = plex.search(query=query)
+            results = plex.library.search(query=query)
         
         if not results:
-            return f"No results found for '{query}'."
-        
-        output = f"Search results for '{query}':\n\n"
+            return json.dumps({
+                "status": "success",
+                "message": f"No results found for '{query}'.",
+                "count": 0,
+                "results": []
+            })
         
         # Group results by type
         results_by_type = {}
@@ -35,119 +50,404 @@ async def search_media(query: str, content_type: str = None) -> str:
                 results_by_type[item_type] = []
             results_by_type[item_type].append(item)
         
-        # Output results organized by type
+        # Format results organized by type
+        formatted_results = {}
+        total_count = 0
+        
         for item_type, items in results_by_type.items():
-            output += f"=== {item_type.upper()} ===\n"
-            for item in items[:10]:  # Limit to 10 items per type to avoid huge outputs
+            formatted_items = []
+            for item in items:  # Limit to 10 items per type to avoid huge outputs
                 try:
+                    formatted_item = {
+                        "title": item.title,
+                        "type": item_type,
+                        "rating_key": getattr(item, 'ratingKey', None)
+                    }
+                    
                     if item_type == 'movie':
-                        title = item.title
-                        year = getattr(item, 'year', '')
-                        rating = getattr(item, 'rating', '')
-                        output += f"- {title} ({year}) [{rating}]\n"
+                        formatted_item["year"] = getattr(item, 'year', None)
+                        formatted_item["rating"] = getattr(item, 'rating', None)
                     
                     elif item_type == 'show':
-                        title = item.title
-                        year = getattr(item, 'year', '')
-                        seasons = len(item.seasons()) if hasattr(item, 'seasons') and callable(item.seasons) else 0
-                        output += f"- {title} ({year}) - {seasons} seasons\n"
+                        formatted_item["year"] = getattr(item, 'year', None)
+                        try:
+                            formatted_item["seasons_count"] = len(item.seasons()) if hasattr(item, 'seasons') and callable(item.seasons) else 0
+                        except:
+                            formatted_item["seasons_count"] = 0
                     
                     elif item_type == 'season':
-                        show_title = getattr(item, 'parentTitle', 'Unknown Show')
-                        season_num = getattr(item, 'index', '?')
-                        output += f"- {show_title}: Season {season_num}\n"
+                        formatted_item["show_title"] = getattr(item, 'parentTitle', 'Unknown Show')
+                        formatted_item["season_number"] = getattr(item, 'index', None)
                     
                     elif item_type == 'episode':
-                        show_title = getattr(item, 'grandparentTitle', 'Unknown Show')
-                        season_num = getattr(item, 'parentIndex', '?')
-                        episode_num = getattr(item, 'index', '?')
-                        title = item.title
-                        output += f"- {show_title}: S{season_num}E{episode_num} - {title}\n"
+                        formatted_item["show_title"] = getattr(item, 'grandparentTitle', 'Unknown Show')
+                        formatted_item["season_number"] = getattr(item, 'parentIndex', None)
+                        formatted_item["episode_number"] = getattr(item, 'index', None)
                     
                     elif item_type == 'artist':
-                        title = item.title
-                        albums = len(item.albums()) if hasattr(item, 'albums') and callable(item.albums) else 0
-                        output += f"- {title} - {albums} albums\n"
+                        try:
+                            formatted_item["albums_count"] = len(item.albums()) if hasattr(item, 'albums') and callable(item.albums) else 0
+                        except:
+                            formatted_item["albums_count"] = 0
                     
                     elif item_type == 'album':
-                        artist = getattr(item, 'parentTitle', 'Unknown Artist')
-                        title = item.title
-                        tracks = len(item.tracks()) if hasattr(item, 'tracks') and callable(item.tracks) else 0
-                        output += f"- {artist} - {title} ({tracks} tracks)\n"
+                        formatted_item["artist"] = getattr(item, 'parentTitle', 'Unknown Artist')
+                        try:
+                            formatted_item["tracks_count"] = len(item.tracks()) if hasattr(item, 'tracks') and callable(item.tracks) else 0
+                        except:
+                            formatted_item["tracks_count"] = 0
                     
                     elif item_type == 'track':
-                        artist = getattr(item, 'grandparentTitle', 'Unknown Artist')
-                        album = getattr(item, 'parentTitle', 'Unknown Album')
-                        title = item.title
-                        output += f"- {artist} - {album} - {title}\n"
+                        formatted_item["artist"] = getattr(item, 'grandparentTitle', 'Unknown Artist')
+                        formatted_item["album"] = getattr(item, 'parentTitle', 'Unknown Album')
                     
-                    else:
-                        # Generic handler for other types
-                        title = getattr(item, 'title', 'Unknown')
-                        output += f"- {title}\n"
+                    formatted_items.append(formatted_item)
                 
                 except Exception as format_error:
-                    # If there's an error formatting a particular item, just output basic info
-                    title = getattr(item, 'title', 'Unknown')
-                    output += f"- {title} (Error: {str(format_error)})\n"
+                    # If there's an error formatting a particular item, include basic info
+                    formatted_items.append({
+                        "title": getattr(item, 'title', 'Unknown'),
+                        "type": item_type,
+                        "error": str(format_error)
+                    })
             
-            output += "\n"
+            formatted_results[item_type] = formatted_items
+            total_count += len(formatted_items)
         
-        return output
+        return json.dumps({
+            "status": "success",
+            "message": f"Found {total_count} results for '{query}'",
+            "query": query,
+            "content_type": content_type,
+            "total_count": total_count,
+            "results_by_type": formatted_results
+        }, indent=2)
     except Exception as e:
-        return f"Error searching: {str(e)}"
+        return json.dumps({
+            "status": "error",
+            "message": f"Error searching: {str(e)}"
+        })
 
 @mcp.tool()
-async def get_media_details(media_title: str, library_name: str = None) -> str:
+async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
     
     Args:
-        media_title: Title of the media to get details for
-        library_name: Optional library name to limit search to
+        media_title: Title of the media to get details for (optional if media_id is provided)
+        media_id: Plex media ID/rating key to directly fetch the item (optional if media_title is provided)
+        library_name: Optional library name to limit search to when using media_title
     """
     try:
         plex = connect_to_plex()
         
+        # Validate that at least one identifier is provided
+        if media_id is None and not media_title:
+            return json.dumps({"error": "Either media_id or media_title must be provided."}, indent=4)
+        
         # Search for the media
-        results = []
-        if library_name:
-            target_section = plex.library.section(library_name)
-            results = target_section.search(title=media_title)
+        if media_id is not None:
+            # If media_id is provided, use it to directly fetch the item
+            try:
+                media = plex.fetchItem(media_id)
+                # Get details for the single item
+                details = get_media_details(media)
+                return json.dumps(details, indent=4)
+            except Exception as e:
+                return json.dumps({"error": f"Could not find media with ID {media_id}. Error: {str(e)}"}, indent=4)
         else:
-            results = plex.search(title=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
-        media = results[0]
-        
-        # Use PlexAPI's Media and Mixin functions to gather details
-        details = {
-            'Title': media.title,
-            'Type': media.type,
-            'Summary': media.summary,
-            'Added At': media.addedAt.strftime("%Y-%m-%d %H:%M:%S") if media.addedAt else 'Unknown',
-            'Rating': media.rating if hasattr(media, 'rating') else 'N/A',
-            'Content Rating': media.contentRating if hasattr(media, 'contentRating') else 'N/A',
-            'Duration': f"{media.duration // 60000} minutes" if media.duration else 'N/A',
-            'Studio': media.studio if hasattr(media, 'studio') else 'N/A',
-            'Genres': ', '.join([genre.tag for genre in media.genres]) if hasattr(media, 'genres') else 'N/A',
-            'Directors': ', '.join([director.tag for director in media.directors]) if hasattr(media, 'directors') else 'N/A',
-            'Writers': ', '.join([writer.tag for writer in media.writers]) if hasattr(media, 'writers') else 'N/A',
-            'Actors': ', '.join([actor.tag for actor in media.actors]) if hasattr(media, 'actors') else 'N/A',
-        }
-        
-        # Format the details into a string
-        result = f"Details for '{media.title}' [{media.type}]:\n"
-        for key, value in details.items():
-            result += f"{key}: {value}\n"
-        
-        return result
+            # Otherwise search by title
+            results = []
+            if library_name:
+                try:
+                    target_section = plex.library.section(library_name)
+                    results = target_section.search(query=media_title)
+                except Exception as e:
+                    return json.dumps({"status": "error", "message": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
+            else:
+                # Search in all libraries, including specific searches for music content
+                results = plex.search(query=media_title)
+                
+                # If no results or we want to specifically check music libraries
+                if not results or any(word in media_title.lower() for word in ['song', 'track', 'album', 'artist', 'music']):
+                    # Get all music libraries
+                    music_libraries = [section for section in plex.library.sections() if section.type == 'artist']
+                    
+                    # Search in each music library
+                    for library in music_libraries:
+                        # Try searching for tracks
+                        track_results = library.search(query=media_title, libtype='track')
+                        results.extend(track_results)
+                        
+                        # Try searching for albums
+                        album_results = library.search(query=media_title, libtype='album')
+                        results.extend(album_results)
+                        
+                        # Try searching for artists
+                        artist_results = library.search(query=media_title, libtype='artist')
+                        results.extend(artist_results)
+            
+            if not results:
+                return json.dumps({"error": f"No media found matching '{media_title}'."}, indent=4)
+            
+            # Multiple results handling - return all matches
+            if len(results) > 1:
+                simplified_results = []
+                for item in results:
+                    try:
+                        simplified_results.append({
+                            'title': getattr(item, 'title', 'Unknown'),
+                            'type': getattr(item, 'type', 'unknown'),
+                            'id': getattr(item, 'ratingKey', None)
+                        })
+                    except Exception as item_error:
+                        # Skip items that cause errors
+                        continue
+                
+                # Only return results that have valid data
+                simplified_results = [item for item in simplified_results if item['id'] is not None]
+                
+                if simplified_results:
+                    return json.dumps(simplified_results, indent=4)
+                else:
+                    return json.dumps({"error": f"Found results for '{media_title}' but couldn't process them properly."}, indent=4)
+            else:
+                # Single result
+                details = get_media_details(results[0])
+                return json.dumps(details, indent=4)
+    
     except Exception as e:
-        return f"Error getting media details: {str(e)}"
+        return json.dumps({"error": f"Error getting media details: {str(e)}"}, indent=4)
+
+# Helper function to extract media details
+def get_media_details(media):
+    """Extract details from a media object and return as a dictionary."""
+    # Format duration as HH:MM:SS
+    def format_duration(ms):
+        if not ms:
+            return None
+        # Convert milliseconds to seconds
+        seconds = ms // 1000
+        # Calculate hours, minutes, seconds
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+        # Format as HH:MM:SS
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    details = {
+        'title': getattr(media, 'title', 'Unknown'),
+        'type': getattr(media, 'type', 'unknown'),
+        'id': getattr(media, 'ratingKey', None),
+        'added_at': getattr(media, 'addedAt', None).strftime("%Y-%m-%d %H:%M:%S") if hasattr(media, 'addedAt') and media.addedAt else None,
+        'rating': getattr(media, 'rating', None),
+        'content_rating': getattr(media, 'contentRating', None),
+        'duration': format_duration(getattr(media, 'duration', None)) if hasattr(media, 'duration') and media.duration else None,
+        'studio': getattr(media, 'studio', None),
+        'year': getattr(media, 'year', None),
+    }
+    
+    # Add type-specific fields
+    if media.type == 'movie':
+        details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None
+        details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
+    elif media.type == 'show':
+        try:
+            details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None
+            
+            # Fix rating display - check for userRating first, then regular rating
+            user_rating = getattr(media, 'userRating', None)
+            if user_rating is not None:
+                details['rating'] = user_rating
+            # Make sure to keep the content rating
+            details['content_rating'] = getattr(media, 'contentRating', None)
+            
+            details['seasons_count'] = len(media.seasons()) if hasattr(media, 'seasons') and callable(media.seasons) else 0
+            details['episodes_count'] = len(media.episodes()) if hasattr(media, 'episodes') and callable(media.episodes) else 0
+            
+            # Add list of seasons with episodes
+            if hasattr(media, 'seasons') and callable(media.seasons):
+                seasons = media.seasons()
+                seasons_list = []
+                
+                for season in seasons:
+                    season_data = {
+                        'title': getattr(season, 'title', f"Season {getattr(season, 'index', 'Unknown')}"),
+                        'id': getattr(season, 'ratingKey', None),
+                        'season_number': getattr(season, 'index', None),
+                        'episodes_count': 0,
+                        'episodes': []
+                    }
+                    
+                    # Add episodes for this season
+                    if hasattr(season, 'episodes') and callable(season.episodes):
+                        try:
+                            episodes = season.episodes()
+                            season_data['episodes_count'] = len(episodes)
+                            
+                            for episode in episodes:
+                                episode_data = {
+                                    'title': getattr(episode, 'title', 'Unknown'),
+                                    'id': getattr(episode, 'ratingKey', None),
+                                    'episode_number': getattr(episode, 'index', None),
+                                    'duration': format_duration(getattr(episode, 'duration', None)) if hasattr(episode, 'duration') and episode.duration else None
+                                }
+                                season_data['episodes'].append(episode_data)
+                        except Exception as e:
+                            season_data['error'] = str(e)
+                    
+                    seasons_list.append(season_data)
+                
+                details['seasons'] = seasons_list
+        except Exception as e:
+            details['summary'] = None
+            details['seasons_count'] = 0
+            details['episodes_count'] = 0
+            details['error_details'] = str(e)
+    elif media.type == 'episode':
+        details['show_title'] = getattr(media, 'grandparentTitle', None)
+        details['season_number'] = getattr(media, 'parentIndex', None)
+        details['episode_number'] = getattr(media, 'index', None)
+        details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None
+        details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
+        
+        # Remove studio field for episodes
+        if 'studio' in details:
+            del details['studio']
+    elif media.type == 'artist':
+        try:   
+            details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None
+            details['albums_count'] = len(media.albums()) if hasattr(media, 'albums') and callable(media.albums) else 0
+            details['tracks_count'] = len(media.tracks()) if hasattr(media, 'tracks') and callable(media.tracks) else 0
+            details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
+            
+            # Remove fields not needed for artists
+            if 'content_rating' in details:
+                del details['content_rating']
+            if 'duration' in details:
+                del details['duration']
+            if 'studio' in details:
+                del details['studio']
+            if 'year' in details:
+                del details['year']
+            
+            # Add list of albums
+            if hasattr(media, 'albums') and callable(media.albums):
+                albums = media.albums()
+                albums_list = []
+                for album in albums:
+                    albums_list.append({
+                        'title': getattr(album, 'title', 'Unknown'),
+                        'id': getattr(album, 'ratingKey', None),
+                        'year': getattr(album, 'year', None),
+                        'tracks_count': len(album.tracks()) if hasattr(album, 'tracks') and callable(album.tracks) else 0
+                    })
+                details['albums'] = albums_list
+        except Exception as e:
+            details['summary'] = None
+            details['albums_count'] = 0
+            details['tracks_count'] = 0
+            details['error_details'] = str(e)
+    elif media.type == 'album':
+        details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None
+        details['artist'] = getattr(media, 'parentTitle', 'Unknown Artist')
+        details['artist_id'] = getattr(media, 'parentRatingKey', None)
+        details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
+        
+        # Remove content_rating field for albums
+        if 'content_rating' in details:
+            del details['content_rating']
+        
+        try:
+            # Calculate total duration of all tracks
+            total_duration_ms = 0
+            if hasattr(media, 'tracks') and callable(media.tracks):
+                tracks = media.tracks()
+                details['tracks_count'] = len(tracks)
+                
+                # Add list of tracks and calculate total duration
+                tracks_list = []
+                for track in tracks:
+                    track_duration = getattr(track, 'duration', 0) or 0
+                    total_duration_ms += track_duration
+                    
+                    tracks_list.append({
+                        'title': getattr(track, 'title', 'Unknown'),
+                        'id': getattr(track, 'ratingKey', None),
+                        'track_number': getattr(track, 'index', None),
+                        'duration': format_duration(track_duration) if track_duration else None
+                    })
+                details['tracks'] = tracks_list
+                
+                # Format total duration
+                if total_duration_ms > 0:
+                    # Convert milliseconds to seconds
+                    seconds = total_duration_ms // 1000
+                    
+                    # Calculate days, hours, minutes, seconds
+                    days = seconds // 86400
+                    seconds %= 86400
+                    hours = seconds // 3600
+                    seconds %= 3600
+                    minutes = seconds // 60
+                    seconds %= 60
+                    
+                    # Format as [DDD:]HH:MM:SS, omitting days if 0
+                    if days > 0:
+                        details['duration'] = f"{days}:{hours:02d}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        details['duration'] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                details['tracks_count'] = 0
+                
+        except Exception as e:
+            details['summary'] = None
+            details['tracks_count'] = 0
+            details['error_details'] = str(e)
+    elif media.type == 'track':
+        details['artist'] = getattr(media, 'grandparentTitle', 'Unknown Artist')
+        details['artist_id'] = getattr(media, 'grandparentRatingKey', None)
+        details['album'] = getattr(media, 'parentTitle', 'Unknown Album')
+        details['album_id'] = getattr(media, 'parentRatingKey', None)
+        details['track_number'] = getattr(media, 'index', None)
+        details['disc_number'] = getattr(media, 'parentIndex', None)
+        details['year'] = getattr(media, 'year', None)
+        details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
+        details['view_count'] = getattr(media, 'viewCount', 0)
+        details['skip_count'] = getattr(media, 'skipCount', 0)
+        
+        # Remove fields not needed for tracks
+        if 'studio' in details:
+            del details['studio']
+        if 'content_rating' in details:
+            del details['content_rating']
+        if 'summary' in details:
+            del details['summary']
+        
+        # If track doesn't have year, try to get it from the album
+        if details['year'] is None and hasattr(media, 'album') and callable(getattr(media, 'album', None)):
+            try:
+                album = media.album()
+                details['year'] = getattr(album, 'year', None)
+            except:
+                pass
+    
+    # Add collections
+    if hasattr(media, 'genres') and media.genres:
+        details['genres'] = [genre.tag for genre in media.genres]
+    
+    if hasattr(media, 'directors') and media.directors:
+        details['directors'] = [director.tag for director in media.directors]
+    
+    if hasattr(media, 'writers') and media.writers:
+        details['writers'] = [writer.tag for writer in media.writers]
+    
+    if hasattr(media, 'actors') and media.actors:
+        details['actors'] = [actor.tag for actor in media.actors]
+    
+    return details
 
 @mcp.tool()
-async def edit_metadata(media_title: str, library_name: str = None, 
+async def media_edit_metadata(media_title: str, library_name: str = None, 
                         new_title: str = None, new_summary: str = None, new_rating: float = None,
                         new_release_date: str = None,  # Add this parameter
                         new_genre: str = None, remove_genre: str = None,
@@ -175,7 +475,7 @@ async def edit_metadata(media_title: str, library_name: str = None,
         if library_name:
             try:
                 library = plex.library.section(library_name)
-                results = library.search(title=media_title)
+                results = library.search(query=media_title)
             except NotFound:
                 return f"Library '{library_name}' not found."
         else:
@@ -307,331 +607,341 @@ async def edit_metadata(media_title: str, library_name: str = None,
         return f"Error editing metadata: {str(e)}"
 
 @mcp.tool()
-async def extract_media_images(media_title: str, library_name: str = None, 
-                              output_dir: str = "./", image_types: List[str] = ["poster", "art"], output_format: str = "base64") -> str:
-    """Extract all images associated with a media item.
+async def media_get_artwork(media_title: str = None, media_id: int = None, library_name: str = None,
+                         image_types: List[str] = ["poster"], output_format: str = "base64",
+                         output_dir: str = "./") -> str:
+    """Get images for a specific media item.
     
     Args:
-        media_title: Title of the media to extract images from
-        library_name: Optional library name to limit search to
-        output_dir: Directory to save images to (default: current directory)
-        image_types: Types of images to extract (e.g., poster, art, thumb, banner)
-        output_format: Format to return image data in (base64, url, or file)
+        media_title: Title of the media to get images for (optional if media_id is provided)
+        media_id: ID of the media to get images for (optional if media_title is provided)
+        library_name: Optional library name to limit search to when using media_title
+        image_types: List of image types to get (poster, art/background, logo, banner, thumb)
+        output_format: Format to return image data in (base64, url, or file_path)
+        output_dir: Directory to save images to when using file output format
     """
     try:
         plex = connect_to_plex()
         
-        # Search for the media
-        if library_name:
+        # Validate that at least one identifier is provided
+        if not media_id and not media_title:
+            return json.dumps({"error": "Either media_id or media_title must be provided"}, indent=4)
+        
+        # Find the media
+        media = None
+        
+        # If media_id is provided, use it to directly fetch the media
+        if media_id:
             try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
+                media = plex.fetchItem(media_id)
+                if not media:
+                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+            except Exception as e:
+                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
         else:
-            results = plex.search(title=media_title)
+            # Search for the media by title
+            results = []
+            if library_name:
+                try:
+                    library = plex.library.section(library_name)
+                    results = library.search(query=media_title)
+                except NotFound:
+                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            else:
+                # Search in all libraries
+                results = plex.search(query=media_title)
+            
+            if not results:
+                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+            
+            # If multiple results, return the possible matches
+            if len(results) > 1:
+                matches = []
+                for item in results:
+                    matches.append({
+                        "title": getattr(item, 'title', 'Unknown'),
+                        "id": getattr(item, 'ratingKey', None),
+                        "type": getattr(item, 'type', 'unknown'),
+                        "year": getattr(item, 'year', None)
+                    })
+                return json.dumps(matches, indent=4)
+            
+            media = results[0]
         
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
-        if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
-        
-        media = results[0]
-        
-        # Define image attributes to check
-        image_attributes = {
-            "poster": "thumb",
-            "art": "art",
-            "banner": "banner",
-            "theme": "theme",
-            "thumbnail": "thumb"
+        # Map image types to their URL attributes and collection methods
+        image_map = {
+            "poster": {"url_attr": "thumbUrl", "collection_method": "posters"},
+            "thumbnail": {"url_attr": "thumbUrl", "collection_method": "posters"},
+            "thumb": {"url_attr": "thumbUrl", "collection_method": "posters"},
+            "background": {"url_attr": "artUrl", "collection_method": "arts"},
+            "art": {"url_attr": "artUrl", "collection_method": "arts"},
+            "logo": {"url_attr": "logoUrl", "collection_method": "logos"},
+            "banner": {"url_attr": "bannerUrl", "collection_method": "None"}
         }
         
         # Extract requested images
-        extracted_images = {}
+        result = {}
         
         for img_type in image_types:
-            attr = image_attributes.get(img_type.lower())
-            if not attr:
+            img_type = img_type.lower()
+            if img_type not in image_map:
+                result[img_type] = {"error": f"Invalid image type: {img_type}"}
                 continue
             
+            url_attr = image_map[img_type]["url_attr"]
+            collection_method = image_map[img_type]["collection_method"]
+            
             # Check if this attribute exists on the media object
-            img_url = getattr(media, attr, None)
-            if img_url:
-                # Use get_media_poster to handle the image processing
-                # We need to temporarily change the media's thumb attribute to the current image URL
-                original_thumb = media.thumb
-                media.thumb = img_url  # Set the thumb to the current image URL
-                
+            if not hasattr(media, url_attr):
+                result[img_type] = {"error": f"This media item doesn't have {img_type} artwork"}
+                continue
+            
+            img_url = getattr(media, url_attr)
+            if not img_url:
+                result[img_type] = {"error": f"No {img_type} artwork found for this media"}
+                continue
+            
+            # Get available artwork versions
+            available_versions = []
+            if collection_method != "None" and hasattr(media, collection_method) and callable(getattr(media, collection_method)):
                 try:
-                    # Use get_media_poster to retrieve the image
-                    result = await get_media_poster(
-                        media_title=media_title,
-                        library_name=library_name,
-                        output_path=os.path.join(output_dir, f"{media.title}_{img_type}.jpg") if output_format == "file" else None,
-                        output_format=output_format
-                    )
-                    
-                    # Add to our results
-                    if output_format == "file":
-                        extracted_images[img_type] = os.path.join(output_dir, f"{media.title}_{img_type}.jpg")
-                    elif output_format == "url":
-                        extracted_images[img_type] = img_url
-                    elif output_format == "base64":
-                        extracted_images[img_type] = result
-                    
-                finally:
-                    # Restore the original thumb attribute
-                    media.thumb = original_thumb
+                    available_versions = getattr(media, collection_method)()
+                except:
+                    pass
+            
+            # Handle different output formats
+            if output_format == "url":
+                result[img_type] = {
+                    "filename": f"{media.title}_{img_type}.jpg",
+                    "type": img_type,
+                    "url": img_url,
+                    "versions_available": len(available_versions)
+                }
+                continue
+            
+            # Get the image data
+            import requests
+            response = requests.get(img_url)
+            
+            if response.status_code != 200:
+                result[img_type] = {"error": f"Failed to download {img_type} image: HTTP {response.status_code}"}
+                continue
+            
+            image_data = response.content
+            
+            # Handle file output
+            if output_format == "file_path":
+                file_path = os.path.join(output_dir, f"{media.title}_{img_type}.jpg")
                 
-        if not extracted_images:
-            return f"No images found for '{media_title}' with the requested types."
+                # Save the file
+                try:
+                    with open(file_path, 'wb') as f:
+                        f.write(image_data)
+                    result[img_type] = {
+                        "filename": file_path,
+                        "type": img_type,
+                        "path": os.path.abspath(file_path),
+                        "versions_available": len(available_versions)
+                    }
+                except Exception as e:
+                    result[img_type] = {"error": f"Failed to save image file: {str(e)}"}
+            
+            # Handle base64 output
+            elif output_format == "base64":
+                import base64
+                b64_data = base64.b64encode(image_data).decode('utf-8')
+                result[img_type] = {
+                    "filename": f"{media.title}_{img_type}.jpg",
+                    "type": img_type,
+                    "base64": b64_data,
+                    "versions_available": len(available_versions)
+                }
+            
+            else:
+                result[img_type] = {"error": f"Invalid output format: {output_format}"}
         
-        return extracted_images
+        # Return all results
+        return json.dumps(result, indent=4)
+        
     except Exception as e:
-        return f"Error extracting images: {str(e)}"
+        return json.dumps({"error": f"Error getting images: {str(e)}"}, indent=4)
 
 @mcp.tool()
-async def delete_media(media_title: str, library_name: str = None) -> str:
+async def media_delete(media_title: str = None, media_id: int = None, library_name: str = None) -> str:
     """Delete a media item from the Plex library.
     
     Args:
-        media_title: Title of the media to delete
-        library_name: Optional library name to limit search to
+        media_title: Title of the media to delete (optional if media_id is provided)
+        media_id: ID of the media to delete (optional if media_title is provided)
+        library_name: Optional library name to limit search to when using media_title
     """
     try:
         plex = connect_to_plex()
         
-        # Search for the media
-        results = []
-        if library_name:
+        # Validate that at least one identifier is provided
+        if not media_id and not media_title:
+            return json.dumps({"error": "Either media_id or media_title must be provided"}, indent=4)
+        
+        # Find the media
+        media = None
+        
+        # If media_id is provided, use it to directly fetch the media
+        if media_id:
             try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
-        else:
-            # Search in all libraries
-            results = plex.search(title=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
-        # If only one result, delete it directly
-        if len(results) == 1:
-            media = results[0]
-            media_type = getattr(media, 'type', 'unknown')
-            year = getattr(media, 'year', '')
-            year_str = f" ({year})" if year else ""
-            
-            # Get the file path for information
-            file_paths = []
-            try:
-                if hasattr(media, 'media') and media.media:
-                    for media_item in media.media:
-                        if hasattr(media_item, 'parts') and media_item.parts:
-                            for part in media_item.parts:
-                                if hasattr(part, 'file') and part.file:
-                                    file_paths.append(part.file)
-            except Exception:
-                pass
-            
-            # Format the information message
-            info_message = f"'{media.title}{year_str}' [{media_type}] will be removed from library."
-            
-            if file_paths:
-                info_message += "\nFiles that will remain on disk:"
-                for path in file_paths:
-                    info_message += f"\n- {path}"
-            
-            # Perform the deletion
-            try:
-                media.delete()
-                return f"Successfully removed '{media.title}{year_str}' from library.\n\n{info_message}"
-            except Exception as delete_error:
-                return f"Error during deletion: {str(delete_error)}"
-        
-        # Multiple results found - return detailed information to help user select
-        else:
-            result_list = f"Multiple items found matching '{media_title}'. Please specify which one to delete:\n\n"
-            
-            for idx, item in enumerate(results, 1):
-                # Get basic information
-                title = getattr(item, 'title', 'Unknown')
-                item_type = getattr(item, 'type', 'unknown')
-                year = getattr(item, 'year', '')
-                year_str = f" ({year})" if year else ""
-                
-                # Add library information if available
-                library_title = getattr(item, 'librarySectionTitle', '')
-                library_str = f" [Library: {library_title}]" if library_title else ""
-                
-                # Format based on item type
-                if item_type == 'movie':
-                    result_list += f"{idx}. Movie: {title}{year_str}{library_str}\n"
-                elif item_type == 'show':
-                    result_list += f"{idx}. TV Show: {title}{year_str}{library_str}\n"
-                elif item_type == 'episode':
-                    show = getattr(item, 'grandparentTitle', 'Unknown Show')
-                    season = getattr(item, 'parentIndex', '?')
-                    episode = getattr(item, 'index', '?')
-                    result_list += f"{idx}. Episode: {show} - S{season:02d}E{episode:02d} - {title}{library_str}\n"
-                elif item_type == 'artist':
-                    result_list += f"{idx}. Artist: {title}{library_str}\n"
-                elif item_type == 'album':
-                    artist = getattr(item, 'parentTitle', 'Unknown Artist')
-                    result_list += f"{idx}. Album: {artist} - {title}{year_str}{library_str}\n"
-                elif item_type == 'track':
-                    artist = getattr(item, 'grandparentTitle', 'Unknown Artist')
-                    album = getattr(item, 'parentTitle', 'Unknown Album')
-                    result_list += f"{idx}. Track: {artist} - {album} - {title}{library_str}\n"
-                else:
-                    result_list += f"{idx}. {item_type.capitalize()}: {title}{library_str}\n"
-            
-            result_list += "\nTo delete a specific item, call this function again with a more specific title or specify a library."
-            return result_list
-            
-    except Exception as e:
-        return f"Error deleting media: {str(e)}"
-
-@mcp.tool()
-async def get_media_artwork(media_title: str, library_name: str = None, 
-                           art_type: str = "poster", output_format: str = "base64",
-                           output_path: str = None) -> dict:
-    """Get artwork for a specific media item.
-    
-    Args:
-        media_title: Title of the media to get artwork for
-        library_name: Optional library name to limit search to
-        art_type: Type of artwork to get (poster, background, art, logo)
-        output_format: Format to return image data in (base64, url, or file)
-        output_path: Optional path to save the image to a file
-    """
-    try:
-        plex = connect_to_plex()
-        
-        # Search for the media
-        if library_name:
-            try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except NotFound:
-                return {"error": f"Library '{library_name}' not found."}
-        else:
-            results = plex.search(title=media_title)
-        
-        if not results:
-            return {"error": f"No media found matching '{media_title}'."}
-        
-        if len(results) > 1:
-            return {"error": f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."}
-        
-        media = results[0]
-        
-        # Normalize art type
-        art_type = art_type.lower()
-        
-        # Map art types to their URL attributes
-        art_map = {
-            "poster": "thumbUrl",
-            "thumbnail": "thumbUrl",
-            "thumb": "thumbUrl",
-            "background": "artUrl",
-            "art": "artUrl", 
-            "logo": "logoUrl",
-            "banner": "bannerUrl"
-        }
-        
-        if art_type not in art_map:
-            return {"error": f"Invalid art type: {art_type}. Supported types: {', '.join(art_map.keys())}"}
-        
-        # Get URL for the requested art type
-        url_attr = art_map[art_type]
-        if not hasattr(media, url_attr):
-            return {"error": f"This media item doesn't have {art_type} artwork."}
-        
-        artwork_url = getattr(media, url_attr)
-        if not artwork_url:
-            return {"error": f"No {art_type} artwork found for '{media_title}'."}
-        
-        # Get available artwork versions based on type
-        available_versions = []
-        if art_type in ["poster", "thumb", "thumbnail"]:
-            if hasattr(media, "posters") and callable(getattr(media, "posters")):
+                # Try fetching by ratingKey
                 try:
-                    available_versions = media.posters()
+                    media = plex.fetchItem(media_id)
                 except:
-                    pass
-        elif art_type in ["background", "art"]:
-            if hasattr(media, "arts") and callable(getattr(media, "arts")):
-                try:
-                    available_versions = media.arts()
-                except:
-                    pass
-        elif art_type == "logo":
-            if hasattr(media, "logos") and callable(getattr(media, "logos")):
-                try:
-                    available_versions = media.logos()
-                except:
-                    pass
-                    
-        # Handle different output formats
-        if output_format == "url":
-            return {
-                "filename": f"{media.title}_{art_type}.jpg",
-                "type": art_type,
-                "url": artwork_url,
-                "versions_available": len(available_versions)
-            }
-        
-        # Get the image data
-        import requests
-        response = requests.get(artwork_url)
-        
-        if response.status_code != 200:
-            return {"error": f"Failed to download {art_type} image: HTTP {response.status_code}"}
-        
-        image_data = response.content
-        
-        # Handle file output
-        if output_format == "file" or output_path:
-            # Determine output path
-            file_path = output_path
-            if not file_path:
-                file_path = f"{media.title}_{art_type}.jpg"
+                    # If that fails, try searching in all libraries
+                    media = None
                 
-            # Save the file
-            try:
-                with open(file_path, 'wb') as f:
-                    f.write(image_data)
-                return {
-                    "filename": file_path,
-                    "type": art_type,
-                    "path": os.path.abspath(file_path),
-                    "versions_available": len(available_versions)
-                }
+                if not media:
+                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+                
+                # Get the file path for information
+                file_paths = []
+                try:
+                    if hasattr(media, 'media') and media.media:
+                        for media_item in media.media:
+                            if hasattr(media_item, 'parts') and media_item.parts:
+                                for part in media_item.parts:
+                                    if hasattr(part, 'file') and part.file:
+                                        file_paths.append(part.file)
+                except Exception:
+                    pass
+                
+                # Store the title to return after deletion
+                media_title_to_return = media.title
+                media_type = getattr(media, 'type', 'unknown')
+                
+                # Perform the deletion
+                try:
+                    media.delete()
+                    return json.dumps({
+                        "deleted": True,
+                        "title": media_title_to_return,
+                        "type": media_type,
+                        "files_on_disk": file_paths
+                    }, indent=4)
+                except Exception as delete_error:
+                    return json.dumps({"error": f"Error during deletion: {str(delete_error)}"}, indent=4)
+                
             except Exception as e:
-                return {"error": f"Failed to save image file: {str(e)}"}
-        
-        # Handle base64 output (default)
-        if output_format == "base64":
-            import base64
-            b64_data = base64.b64encode(image_data).decode('utf-8')
-            return {
-                "filename": f"{media.title}_{art_type}.jpg",
-                "type": art_type,
-                "base64": b64_data,
-                "versions_available": len(available_versions)
-            }
-        
-        return {"error": f"Invalid output format: {output_format}"}
-        
+                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
+        else:
+            # Search for the media by title
+            results = []
+            if library_name:
+                try:
+                    library = plex.library.section(library_name)
+                    results = library.search(query=media_title)
+                except NotFound:
+                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            else:
+                # Search in all libraries
+                results = plex.search(query=media_title)
+            
+            if not results:
+                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+            
+            # Filter results to only include valid media types
+            valid_media_results = []
+            for item in results:
+                if hasattr(item, 'type') and getattr(item, 'type', None) in ['movie', 'show', 'episode', 'season', 'artist', 'album', 'track']:
+                    valid_media_results.append(item)
+            
+            # If no valid media results, return an error
+            if not valid_media_results:
+                return json.dumps({"error": f"Found results for '{media_title}' but none were valid media items"}, indent=4)
+                
+            # When searching by title, always return multiple matches if multiple are found
+            # This allows the user to select the specific media item they want to delete
+            if len(valid_media_results) > 1:
+                matches = []
+                for item in valid_media_results:
+                    try:
+                        match_data = {
+                            "title": getattr(item, 'title', 'Unknown'),
+                            "id": getattr(item, 'ratingKey', None),
+                            "type": getattr(item, 'type', 'unknown')
+                        }
+                        
+                        # Add year if available (helps differentiate movies with same title)
+                        if hasattr(item, 'year'):
+                            match_data["year"] = item.year
+                            
+                        # Add library info if available
+                        if hasattr(item, 'librarySectionTitle'):
+                            match_data["library"] = item.librarySectionTitle
+                            
+                        # Add additional disambiguation info based on type
+                        if item.type == 'episode':
+                            if hasattr(item, 'grandparentTitle'):
+                                match_data["show"] = item.grandparentTitle
+                            if hasattr(item, 'parentIndex'):
+                                match_data["season"] = item.parentIndex
+                            if hasattr(item, 'index'):
+                                match_data["episode"] = item.index
+                        elif item.type == 'season':
+                            if hasattr(item, 'parentTitle'):
+                                match_data["show"] = item.parentTitle
+                            if hasattr(item, 'index'):
+                                match_data["season_number"] = item.index
+                        elif item.type == 'album':
+                            if hasattr(item, 'parentTitle'):
+                                match_data["artist"] = item.parentTitle
+                        elif item.type == 'track':
+                            if hasattr(item, 'grandparentTitle'):
+                                match_data["artist"] = item.grandparentTitle
+                            if hasattr(item, 'parentTitle'):
+                                match_data["album"] = item.parentTitle
+                        
+                        matches.append(match_data)
+                    except Exception as e:
+                        # Skip items that cause errors
+                        continue
+                
+                if matches:
+                    return json.dumps(matches, indent=4)
+                else:
+                    return json.dumps({"error": f"Found results for '{media_title}' but none had valid attributes"}, indent=4)
+            else:
+                # Use the single valid result
+                media = valid_media_results[0]
+                
+                # Get the file path for information
+                file_paths = []
+                try:
+                    if hasattr(media, 'media') and media.media:
+                        for media_item in media.media:
+                            if hasattr(media_item, 'parts') and media_item.parts:
+                                for part in media_item.parts:
+                                    if hasattr(part, 'file') and part.file:
+                                        file_paths.append(part.file)
+                except Exception:
+                    pass
+                
+                # Store the title to return after deletion
+                media_title_to_return = media.title
+                media_type = getattr(media, 'type', 'unknown')
+                
+                # Perform the deletion
+                try:
+                    media.delete()
+                    return json.dumps({
+                        "deleted": True,
+                        "title": media_title_to_return,
+                        "type": media_type,
+                        "files_on_disk": file_paths
+                    }, indent=4)
+                except Exception as delete_error:
+                    return json.dumps({"error": f"Error during deletion: {str(delete_error)}"}, indent=4)
+                
     except Exception as e:
-        return {"error": f"Error getting {art_type} artwork: {str(e)}"}
+        return json.dumps({"error": f"Error deleting media: {str(e)}"}, indent=4)
 
 @mcp.tool()
-async def set_media_artwork(media_title: str, library_name: str = None,
+async def media_set_artwork(media_title: str, library_name: str = None,
                           art_type: str = "poster", 
                           filepath: str = None, url: str = None,
                           lock: bool = False) -> str:
@@ -681,11 +991,11 @@ async def set_media_artwork(media_title: str, library_name: str = None,
         if library_name:
             try:
                 library = plex.library.section(library_name)
-                results = library.search(title=media_title)
+                results = library.search(query=media_title)
             except NotFound:
                 return f"Library '{library_name}' not found."
         else:
-            results = plex.search(title=media_title)
+            results = plex.search(query=media_title)
         
         if not results:
             return f"No media found matching '{media_title}'."
@@ -723,15 +1033,20 @@ async def set_media_artwork(media_title: str, library_name: str = None,
         return f"Error setting {art_type} artwork: {str(e)}"
 
 @mcp.tool()
-async def list_available_artwork(media_title: str, library_name: str = None, art_type: str = "poster") -> str:
+async def media_list_available_artwork(media_title: str = None, media_id: int = None, library_name: str = None, art_type: str = "poster") -> str:
     """List all available artwork for a specific media item.
     
     Args:
-        media_title: Title of the media to list artwork for
-        library_name: Optional library name to limit search to
+        media_title: Title of the media to list artwork for (optional if media_id is provided)
+        media_id: ID of the media to list artwork for (optional if media_title is provided)
+        library_name: Optional library name to limit search to when using media_title
         art_type: Type of artwork to list (poster, background/art, logo)
     """
     try:
+        # Validate that at least one identifier is provided
+        if not media_id and not media_title:
+            return json.dumps({"error": "Either media_id or media_title must be provided"}, indent=4)
+            
         # Normalize art type
         art_type = art_type.lower()
         
@@ -744,51 +1059,126 @@ async def list_available_artwork(media_title: str, library_name: str = None, art
         }
         
         if art_type not in art_methods:
-            return f"Invalid art type: {art_type}. Supported types: {', '.join(art_methods.keys())}"
+            return json.dumps({"error": f"Invalid art type: {art_type}. Supported types: {', '.join(art_methods.keys())}"}, indent=4)
         
         plex = connect_to_plex()
         
-        # Search for the media
-        if library_name:
+        # Find the media
+        media = None
+        
+        # If media_id is provided, use it to directly fetch the media
+        if media_id:
             try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
+                media = plex.fetchItem(media_id)
+                if not media:
+                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+                
+                # Verify object type is a media item that can have artwork
+                if not hasattr(media, 'type') or getattr(media, 'type', None) not in ['movie', 'show', 'episode', 'season', 'artist', 'album', 'track']:
+                    return json.dumps({"error": f"The item with ID {media_id} is not a media item that can have artwork"}, indent=4)
+            except Exception as e:
+                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
         else:
-            results = plex.search(title=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
-        if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
-        
-        media = results[0]
+            # Search for the media by title
+            if library_name:
+                try:
+                    library = plex.library.section(library_name)
+                    results = library.search(query=media_title)
+                except NotFound:
+                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            else:
+                results = plex.search(query=media_title)
+            
+            if not results:
+                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+            
+            # Filter results to only include valid media types
+            valid_media_results = []
+            for item in results:
+                if hasattr(item, 'type') and getattr(item, 'type', None) in ['movie', 'show', 'episode', 'season', 'artist', 'album', 'track']:
+                    valid_media_results.append(item)
+            
+            # If no valid media results, return an error
+            if not valid_media_results:
+                return json.dumps({"error": f"Found results for '{media_title}' but none were valid media items that can have artwork"}, indent=4)
+            
+            # When searching by title, always return multiple matches if multiple are found
+            # This allows the user to select the specific media item they want
+            if len(valid_media_results) > 1:
+                matches = []
+                for item in valid_media_results:
+                    try:
+                        match_data = {
+                            "title": getattr(item, 'title', 'Unknown'),
+                            "id": getattr(item, 'ratingKey', None),
+                            "type": getattr(item, 'type', 'unknown')
+                        }
+                        
+                        # Add year if available (helps differentiate movies with same title)
+                        if hasattr(item, 'year'):
+                            match_data["year"] = item.year
+                            
+                        # Add additional disambiguation info based on type
+                        if item.type == 'episode':
+                            if hasattr(item, 'grandparentTitle'):
+                                match_data["show"] = item.grandparentTitle
+                            if hasattr(item, 'parentIndex'):
+                                match_data["season"] = item.parentIndex
+                            if hasattr(item, 'index'):
+                                match_data["episode"] = item.index
+                        elif item.type == 'season':
+                            if hasattr(item, 'parentTitle'):
+                                match_data["show"] = item.parentTitle
+                            if hasattr(item, 'index'):
+                                match_data["season_number"] = item.index
+                        
+                        matches.append(match_data)
+                    except Exception as e:
+                        # Skip items that cause errors
+                        continue
+                
+                if matches:
+                    return json.dumps(matches, indent=4)
+                else:
+                    return json.dumps({"error": f"Found results for '{media_title}' but none had valid attributes"}, indent=4)
+            else:
+                # Use the single valid result
+                media = valid_media_results[0]
         
         # Check if the object supports this art type
         art_method = art_methods.get(art_type)
         if not hasattr(media, art_method):
-            return f"This media item doesn't support {art_type} artwork."
+            return json.dumps({"error": f"This media item doesn't support {art_type} artwork"}, indent=4)
         
-        # Get available artwork
-        get_art_fn = getattr(media, art_method)
-        artwork_list = get_art_fn()
-        
-        if not artwork_list:
-            return f"No {art_type} artwork found for '{media.title}'."
-        
-        # Build response
-        output = f"Available {art_type} artwork for '{media.title}':\n\n"
-        
-        for i, art in enumerate(artwork_list, 1):
-            provider = getattr(art, 'provider', 'Unknown')
-            preview_url = getattr(art, 'key', 'No URL available')
-            selected = "(Selected)" if getattr(art, 'selected', False) else ""
+        # Get available artwork safely
+        try:
+            get_art_fn = getattr(media, art_method)
+            artwork_list = get_art_fn()
             
-            output += f"{i}. Provider: {provider} {selected}\n"
-            output += f"   URL: {preview_url}\n\n"
+            if not artwork_list:
+                return json.dumps({"error": f"No {art_type} artwork found for media"}, indent=4)
             
-        return output
+            # Build response as JSON
+            artwork_info = []
+            
+            for i, art in enumerate(artwork_list, 1):
+                art_data = {
+                    "index": i,
+                    "provider": getattr(art, 'provider', 'Unknown'),
+                    "url": getattr(art, 'key', None),
+                    "selected": getattr(art, 'selected', False),
+                    "rating_key": getattr(art, 'ratingKey', None) if hasattr(art, 'ratingKey') else None
+                }
+                artwork_info.append(art_data)
+                
+            return json.dumps({
+                "media_title": getattr(media, 'title', 'Unknown'),
+                "media_id": getattr(media, 'ratingKey', None),
+                "art_type": art_type,
+                "count": len(artwork_info),
+                "artwork": artwork_info
+            }, indent=4)
+        except Exception as art_error:
+            return json.dumps({"error": f"Error retrieving {art_type} artwork: {str(art_error)}"}, indent=4)
     except Exception as e:
-        return f"Error listing {art_type} artwork: {str(e)}"
+        return json.dumps({"error": f"Error listing {art_type} artwork: {str(e)}"}, indent=4)

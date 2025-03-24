@@ -1,6 +1,6 @@
 plexapi>=4.15.0
-mcp-python>=0.1.12
 starlette>=0.28.0
 uvicorn>=0.23.0
 requests>=2.31.0
 python-dotenv>=1.0.0 
+mcp

@@ -12,73 +12,76 @@ from modules import mcp, connect_to_plex
 # Import all tools to ensure they are registered with MCP
 # Library module functions
 from modules.library import (
-    list_libraries,
-    get_library_stats,
-    refresh_library,
-    scan_library,
-    get_library_details,
-    get_recently_added,
-    get_library_contents
+    library_list,
+    library_get_stats,
+    library_refresh,
+    library_scan,
+    library_get_details,
+    library_get_recently_added,
+    library_get_contents
 )
 # User module functions
 from modules.user import (
-    search_users,
-    get_user_info,
-    get_user_on_deck,
-    get_user_watch_history
+    user_search_users,
+    user_get_info,
+    user_get_on_deck,
+    user_get_watch_history
 )
 # Search module functions
 from modules.sessions import (
-    get_active_sessions,
-    get_media_playback_history
+    sessions_get_active,
+    sessions_get_media_playback_history
 )
 # Server module functions
 from modules.server import (
-    get_plex_logs,
-    get_server_info,
-    get_server_activities,
-    get_server_bandwidth,
-    get_server_resources,
-    get_server_butler_tasks,
-    get_server_sessions_stats,
-    get_server_alerts,
-    toggle_butler_task,
-    run_butler_task
+    server_get_plex_logs,
+    server_get_info,
+    server_get_bandwidth,
+    server_get_current_resources,
+    server_get_butler_tasks,
+    server_get_alerts,
+    server_run_butler_task
 )
 # Playlist module functions
 from modules.playlist import (
-    create_playlist,
-    delete_playlist,
-    add_to_playlist,
-    remove_from_playlist,
-    edit_playlist,
-    upload_playlist_poster,
-    copy_playlist_to_user
+    playlist_list,
+    playlist_get_contents,
+    playlist_create,
+    playlist_delete,
+    playlist_add_to,
+    playlist_remove_from,
+    playlist_edit,
+    playlist_upload_poster,
+    playlist_copy_to_user
 )
 # Collection module functions
 from modules.collection import (
-    list_collections,
-    create_collection,
-    add_to_collection,
-    remove_from_collection,
-    edit_collection
+    collection_list,
+    collection_create,
+    collection_add_to,
+    collection_remove_from,
+    collection_edit
 )
 # Media module functions
 from modules.media import (
-    search_media,
-    get_media_details,
-    edit_metadata,
-    extract_media_images,
-    delete_media,
-    get_media_artwork,
-    set_media_artwork,
-    list_available_artwork  
+    media_search,
+    media_get_details,
+    media_edit_metadata,
+    media_delete,
+    media_get_artwork,
+    media_set_artwork,
+    media_list_available_artwork  
 )  
 # Client module functions
 from modules.client import (
-    list_clients, get_client_details, get_client_timelines,
-    get_active_clients, start_playback, control_playback,
-    navigate_client, set_streams
+    client_list, 
+    client_get_details, 
+    client_get_timelines,
+    client_get_active, 
+    client_start_playback, 
+    client_control_playback,
+    client_navigate, 
+    client_set_streams
 )
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
@@ -108,10 +111,10 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 if __name__ == "__main__":
     # Setup command line arguments
     parser = argparse.ArgumentParser(description='Run Plex MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
+    parser.add_argument('--transport', choices=['stdio', 'sse'], default='sse', 
                         help='Transport method to use (stdio or sse)')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (for SSE)')
-    parser.add_argument('--port', type=int, default=8080, help='Port to listen on (for SSE)')
+    parser.add_argument('--port', type=int, default=3001, help='Port to listen on (for SSE)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     
     args = parser.parse_args()

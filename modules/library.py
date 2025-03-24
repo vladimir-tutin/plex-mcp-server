@@ -1,27 +1,34 @@
-from typing import Optional
+import json
 from plexapi.exceptions import NotFound # type: ignore
 from modules import mcp, connect_to_plex
 
 @mcp.tool()
-async def list_libraries() -> str:
+async def library_list() -> str:
     """List all available libraries on the Plex server."""
     try:
         plex = connect_to_plex()
         libraries = plex.library.sections()
         
         if not libraries:
-            return "No libraries found on your Plex server."
+            return json.dumps({"message": "No libraries found on your Plex server."})
         
-        result = "Available Plex libraries:\n"
+        libraries_dict = {}
         for lib in libraries:
-            result += f"- {lib.title} ({lib.type}): {lib.totalSize} items\n"
+            libraries_dict[lib.title] = {
+                "type": lib.type,
+                "libraryId": lib.key,
+                "totalSize": lib.totalSize,
+                "uuid": lib.uuid,
+                "locations": lib.locations,
+                "updatedAt": lib.updatedAt.isoformat()
+            }
         
-        return result
+        return json.dumps(libraries_dict)
     except Exception as e:
-        return f"Error listing libraries: {str(e)}"
+        return json.dumps({"error": f"Error listing libraries: {str(e)}"})
 
 @mcp.tool()
-async def get_library_stats(library_name: str) -> str:
+async def library_get_stats(library_name: str) -> str:
     """Get statistics for a specific library.
     
     Args:
@@ -42,21 +49,21 @@ async def get_library_stats(library_name: str) -> str:
                 break
         
         if not target_section:
-            return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+            return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
         
-        # Get the library stats
-        result = f"Statistics for library '{target_section.title}':\n"
-        result += f"Type: {target_section.type}\n"
-        result += f"Total items: {target_section.totalSize}\n"
+        # Create the response dictionary
+        result = {
+            "name": target_section.title,
+            "type": target_section.type,
+            "totalItems": target_section.totalSize
+        }
         
         # Type-specific stats
         if target_section.type == 'movie':
-            result += "\n=== Movie Library Stats ===\n"
-            result += f"Movies: {len(target_section.all())}\n"
-            
-            # Get unwatched movies count
-            unwatched = target_section.search(unwatched=True)
-            result += f"Unwatched: {len(unwatched)}\n"
+            movie_stats = {
+                "count": len(target_section.all()),
+                "unwatched": len(target_section.search(unwatched=True))
+            }
             
             # Get genres, directors and studios statistics
             genres = {}
@@ -86,31 +93,31 @@ async def get_library_stats(library_name: str) -> str:
                     decade = (year // 10) * 10
                     decades[decade] = decades.get(decade, 0) + 1
             
-            # Add to results if we have data
+            # Add top items to results
             if genres:
-                result += "\nTop Genres:\n"
+                movie_stats["topGenres"] = {}
                 for genre, count in sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5]:
-                    result += f"- {genre}: {count} movies\n"
+                    movie_stats["topGenres"][genre] = count
             
             if directors:
-                result += "\nTop Directors:\n"
+                movie_stats["topDirectors"] = {}
                 for director, count in sorted(directors.items(), key=lambda x: x[1], reverse=True)[:5]:
-                    result += f"- {director}: {count} movies\n"
+                    movie_stats["topDirectors"][director] = count
             
             if studios:
-                result += "\nTop Studios:\n"
+                movie_stats["topStudios"] = {}
                 for studio, count in sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5]:
-                    result += f"- {studio}: {count} movies\n"
+                    movie_stats["topStudios"][studio] = count
                     
             if decades:
-                result += "\nMovies by Decade:\n"
+                movie_stats["byDecade"] = {}
                 for decade, count in sorted(decades.items()):
-                    result += f"- {decade}s: {count} movies\n"
+                    movie_stats["byDecade"][str(decade)] = count
+            
+            result["movieStats"] = movie_stats
                     
         elif target_section.type == 'show':
-            result += "\n=== TV Show Library Stats ===\n"
             all_shows = target_section.all()
-            result += f"Shows: {len(all_shows)}\n"
             
             # Count seasons and episodes
             season_count = 0
@@ -121,17 +128,17 @@ async def get_library_stats(library_name: str) -> str:
                 for season in seasons:
                     episode_count += len(season.episodes())
             
-            result += f"Seasons: {season_count}\n"
-            result += f"Episodes: {episode_count}\n"
+            show_stats = {
+                "shows": len(all_shows),
+                "seasons": season_count,
+                "episodes": episode_count,
+                "unwatchedShows": len(target_section.search(unwatched=True))
+            }
             
-            # Get unwatched shows count
-            unwatched_shows = target_section.search(unwatched=True)
-            result += f"Unwatched Shows: {len(unwatched_shows)}\n"
+            result["showStats"] = show_stats
             
         elif target_section.type == 'artist':
-            result += "\n=== Music Library Stats ===\n"
             artists = target_section.all()
-            result += f"Artists: {len(artists)}\n"
             
             # Count albums and tracks
             album_count = 0
@@ -142,15 +149,20 @@ async def get_library_stats(library_name: str) -> str:
                 for album in albums:
                     track_count += len(album.tracks())
             
-            result += f"Albums: {album_count}\n"
-            result += f"Tracks: {track_count}\n"
+            music_stats = {
+                "artists": len(artists),
+                "albums": album_count,
+                "tracks": track_count
+            }
             
-        return result
+            result["musicStats"] = music_stats
+            
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting library stats: {str(e)}"
+        return json.dumps({"error": f"Error getting library stats: {str(e)}"})
 
 @mcp.tool()
-async def refresh_library(library_name: str = None) -> str:
+async def library_refresh(library_name: str = None) -> str:
     """Refresh a specific library or all libraries.
     
     Args:
@@ -171,20 +183,20 @@ async def refresh_library(library_name: str = None) -> str:
                     break
             
             if not section:
-                return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+                return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
             
             # Refresh the library
             section.refresh()
-            return f"Refreshing library '{section.title}'. This may take some time."
+            return json.dumps({"success": True, "message": f"Refreshing library '{section.title}'. This may take some time."})
         else:
             # Refresh all libraries
             plex.library.refresh()
-            return "Refreshing all libraries. This may take some time."
+            return json.dumps({"success": True, "message": "Refreshing all libraries. This may take some time."})
     except Exception as e:
-        return f"Error refreshing library: {str(e)}"
+        return json.dumps({"error": f"Error refreshing library: {str(e)}"})
 
 @mcp.tool()
-async def scan_library(library_name: str, path: str = None) -> str:
+async def library_scan(library_name: str, path: str = None) -> str:
     """Scan a specific library or part of a library.
     
     Args:
@@ -205,23 +217,23 @@ async def scan_library(library_name: str, path: str = None) -> str:
                 break
         
         if not section:
-            return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+            return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
         
         # Scan the library
         if path:
             try:
                 section.update(path=path)
-                return f"Scanning path '{path}' in library '{section.title}'. This may take some time."
+                return json.dumps({"success": True, "message": f"Scanning path '{path}' in library '{section.title}'. This may take some time."})
             except NotFound:
-                return f"Path '{path}' not found in library '{section.title}'."
+                return json.dumps({"error": f"Path '{path}' not found in library '{section.title}'."})
         else:
             section.update()
-            return f"Scanning library '{section.title}'. This may take some time."
+            return json.dumps({"success": True, "message": f"Scanning library '{section.title}'. This may take some time."})
     except Exception as e:
-        return f"Error scanning library: {str(e)}"
+        return json.dumps({"error": f"Error scanning library: {str(e)}"})
 
 @mcp.tool()
-async def get_library_details(library_name: str) -> str:
+async def library_get_details(library_name: str) -> str:
     """Get detailed information about a specific library, including folder paths and settings.
     
     Args:
@@ -241,57 +253,56 @@ async def get_library_details(library_name: str) -> str:
                 break
         
         if not target_section:
-            return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+            return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
         
-        # Get the library details
-        result = f"Details for library '{target_section.title}':\n"
-        result += f"Type: {target_section.type}\n"
-        result += f"UUID: {target_section.uuid}\n"
-        result += f"Total items: {target_section.totalSize}\n"
-        
-        # Get locations
-        result += "\nLocations:\n"
-        for location in target_section.locations:
-            result += f"- {location}\n"
-        
-        # Get agent, scanner, and language
-        result += f"\nAgent: {target_section.agent}\n"
-        result += f"Scanner: {target_section.scanner}\n"
-        result += f"Language: {target_section.language}\n"
+        # Create the result dictionary
+        result = {
+            "name": target_section.title,
+            "type": target_section.type,
+            "uuid": target_section.uuid,
+            "totalItems": target_section.totalSize,
+            "locations": target_section.locations,
+            "agent": target_section.agent,
+            "scanner": target_section.scanner,
+            "language": target_section.language
+        }
         
         # Get additional attributes using _data
         data = target_section._data
         
         # Add scanner settings if available
         if 'scannerSettings' in data:
-            result += "\nScanner Settings:\n"
+            scanner_settings = {}
             for setting in data['scannerSettings']:
                 if 'value' in setting:
-                    value = setting['value']
-                    result += f"- {setting.get('key', 'unknown')}: {value}\n"
+                    scanner_settings[setting.get('key', 'unknown')] = setting['value']
+            if scanner_settings:
+                result["scannerSettings"] = scanner_settings
         
         # Add agent settings if available
         if 'agentSettings' in data:
-            result += "\nAgent Settings:\n"
+            agent_settings = {}
             for setting in data['agentSettings']:
                 if 'value' in setting:
-                    value = setting['value']
-                    result += f"- {setting.get('key', 'unknown')}: {value}\n"
+                    agent_settings[setting.get('key', 'unknown')] = setting['value']
+            if agent_settings:
+                result["agentSettings"] = agent_settings
         
         # Add advanced settings if available
         if 'advancedSettings' in data:
-            result += "\nAdvanced Settings:\n"
+            advanced_settings = {}
             for setting in data['advancedSettings']:
                 if 'value' in setting:
-                    value = setting['value']
-                    result += f"- {setting.get('key', 'unknown')}: {value}\n"
+                    advanced_settings[setting.get('key', 'unknown')] = setting['value']
+            if advanced_settings:
+                result["advancedSettings"] = advanced_settings
                 
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting library details: {str(e)}"
+        return json.dumps({"error": f"Error getting library details: {str(e)}"})
 
 @mcp.tool()
-async def get_recently_added(count: int = 50, library_name: str = None) -> str:
+async def library_get_recently_added(count: int = 50, library_name: str = None) -> str:
     """Get recently added media across all libraries or in a specific library.
     
     Args:
@@ -314,7 +325,7 @@ async def get_recently_added(count: int = 50, library_name: str = None) -> str:
                     break
             
             if not section:
-                return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+                return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
             
             # Get recently added from this library
             recent = section.recentlyAdded(maxresults=count)
@@ -330,81 +341,96 @@ async def get_recently_added(count: int = 50, library_name: str = None) -> str:
                     recent = recent[:count]
         
         if not recent:
-            return "No recently added items found."
+            return json.dumps({"message": "No recently added items found."})
         
-        # Format the output
-        result = f"Recently added items{' in ' + library_name if library_name else ''} (showing {len(recent)} of {count}):\n\n"
+        # Prepare the result
+        result = {
+            "count": len(recent),
+            "requestedCount": count,
+            "library": library_name if library_name else "All Libraries",
+            "items": {}
+        }
         
         # Group results by type
-        results_by_type = {}
         for item in recent:
             item_type = getattr(item, 'type', 'unknown')
-            if item_type not in results_by_type:
-                results_by_type[item_type] = []
-            results_by_type[item_type].append(item)
-        
-        # Output results organized by type
-        for item_type, items in results_by_type.items():
-            result += f"=== {item_type.upper()} ===\n"
-            for item in items:
-                try:
-                    added_at = getattr(item, 'addedAt', 'Unknown date')
-                    
-                    if item_type == 'movie':
-                        title = item.title
-                        year = getattr(item, 'year', '')
-                        result += f"- {title} ({year}) - Added: {added_at}\n"
-                    
-                    elif item_type == 'show':
-                        title = item.title
-                        year = getattr(item, 'year', '')
-                        result += f"- {title} ({year}) - Added: {added_at}\n"
-                    
-                    elif item_type == 'season':
-                        show_title = getattr(item, 'parentTitle', 'Unknown Show')
-                        season_num = getattr(item, 'index', '?')
-                        result += f"- {show_title}: Season {season_num} - Added: {added_at}\n"
-                    
-                    elif item_type == 'episode':
-                        show_title = getattr(item, 'grandparentTitle', 'Unknown Show')
-                        season_num = getattr(item, 'parentIndex', '?')
-                        episode_num = getattr(item, 'index', '?')
-                        title = item.title
-                        result += f"- {show_title}: S{season_num}E{episode_num} - {title} - Added: {added_at}\n"
-                    
-                    elif item_type == 'artist':
-                        title = item.title
-                        result += f"- {title} - Added: {added_at}\n"
-                    
-                    elif item_type == 'album':
-                        artist = getattr(item, 'parentTitle', 'Unknown Artist')
-                        title = item.title
-                        result += f"- {artist} - {title} - Added: {added_at}\n"
-                    
-                    elif item_type == 'track':
-                        artist = getattr(item, 'grandparentTitle', 'Unknown Artist')
-                        album = getattr(item, 'parentTitle', 'Unknown Album')
-                        title = item.title
-                        result += f"- {artist} - {album} - {title} - Added: {added_at}\n"
-                    
-                    else:
-                        # Generic handler for other types
-                        title = getattr(item, 'title', 'Unknown')
-                        result += f"- {title} - Added: {added_at}\n"
-                
-                except Exception as format_error:
-                    # If there's an error formatting a particular item, just output basic info
-                    title = getattr(item, 'title', 'Unknown')
-                    result += f"- {title} - Error: {str(format_error)}\n"
+            if item_type not in result["items"]:
+                result["items"][item_type] = []
             
-            result += "\n"
+            try:
+                added_at = str(getattr(item, 'addedAt', 'Unknown date'))
+                
+                if item_type == 'movie':
+                    result["items"][item_type].append({
+                        "title": item.title,
+                        "year": getattr(item, 'year', ''),
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'show':
+                    result["items"][item_type].append({
+                        "title": item.title,
+                        "year": getattr(item, 'year', ''),
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'season':
+                    result["items"][item_type].append({
+                        "showTitle": getattr(item, 'parentTitle', 'Unknown Show'),
+                        "seasonNumber": getattr(item, 'index', '?'),
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'episode':
+                    result["items"][item_type].append({
+                        "showTitle": getattr(item, 'grandparentTitle', 'Unknown Show'),
+                        "seasonNumber": getattr(item, 'parentIndex', '?'),
+                        "episodeNumber": getattr(item, 'index', '?'),
+                        "title": item.title,
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'artist':
+                    result["items"][item_type].append({
+                        "title": item.title,
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'album':
+                    result["items"][item_type].append({
+                        "artist": getattr(item, 'parentTitle', 'Unknown Artist'),
+                        "title": item.title,
+                        "addedAt": added_at
+                    })
+                
+                elif item_type == 'track':
+                    result["items"][item_type].append({
+                        "artist": getattr(item, 'grandparentTitle', 'Unknown Artist'),
+                        "album": getattr(item, 'parentTitle', 'Unknown Album'),
+                        "title": item.title,
+                        "addedAt": added_at
+                    })
+                
+                else:
+                    # Generic handler for other types
+                    result["items"][item_type].append({
+                        "title": getattr(item, 'title', 'Unknown'),
+                        "addedAt": added_at
+                    })
+            
+            except Exception as format_error:
+                # If there's an error formatting a particular item, just output basic info
+                result["items"][item_type].append({
+                    "title": getattr(item, 'title', 'Unknown'),
+                    "error": str(format_error)
+                })
         
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting recently added items: {str(e)}"
+        return json.dumps({"error": f"Error getting recently added items: {str(e)}"})
 
 @mcp.tool()
-async def get_library_contents(library_name: str, limit: int = 100, offset: int = 0) -> str:
+async def library_get_contents(library_name: str, limit: int = 100, offset: int = 0) -> str:
     """Get the full contents of a specific library.
     
     Args:
@@ -429,7 +455,7 @@ async def get_library_contents(library_name: str, limit: int = 100, offset: int 
                 break
         
         if not target_section:
-            return f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+            return json.dumps({"error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"})
         
         # Get all items in the library
         all_items = target_section.all()
@@ -438,8 +464,16 @@ async def get_library_contents(library_name: str, limit: int = 100, offset: int 
         # Apply pagination
         paginated_items = all_items[offset:offset+limit]
         
-        # Format the output
-        result = f"Contents of library '{target_section.title}' (showing {len(paginated_items)} of {total_items} items):\n\n"
+        # Prepare the result
+        result = {
+            "name": target_section.title,
+            "type": target_section.type,
+            "totalItems": total_items,
+            "offset": offset,
+            "limit": limit,
+            "itemsReturned": len(paginated_items),
+            "items": []
+        }
         
         # Output based on library type
         if target_section.type == 'movie':
@@ -451,19 +485,31 @@ async def get_library_contents(library_name: str, limit: int = 100, offset: int 
                 minutes, seconds = divmod(remainder, 60)
                 
                 # Get resolution
-                media_info = ""
+                media_info = {}
                 if hasattr(item, 'media') and item.media:
                     for media in item.media:
                         resolution = getattr(media, 'videoResolution', '')
                         codec = getattr(media, 'videoCodec', '')
                         if resolution and codec:
-                            media_info = f" [{resolution} {codec}]"
+                            media_info = {
+                                "resolution": resolution,
+                                "codec": codec
+                            }
                             break
                 
                 # Check if watched
-                watched = "✓" if getattr(item, 'viewCount', 0) > 0 else " "
+                watched = getattr(item, 'viewCount', 0) > 0
                 
-                result += f"{watched} {item.title} ({year}) - {hours}h {minutes}m{media_info}\n"
+                result["items"].append({
+                    "title": item.title,
+                    "year": year,
+                    "duration": {
+                        "hours": hours,
+                        "minutes": minutes
+                    },
+                    "mediaInfo": media_info,
+                    "watched": watched
+                })
         
         elif target_section.type == 'show':
             for item in paginated_items:
@@ -473,30 +519,49 @@ async def get_library_contents(library_name: str, limit: int = 100, offset: int 
                 
                 # Check if all episodes are watched
                 unwatched = item.unwatched()
-                status = "✓" if len(unwatched) == 0 and episode_count > 0 else " "
+                watched = len(unwatched) == 0 and episode_count > 0
                 
-                result += f"{status} {item.title} ({year}) - {season_count} seasons, {episode_count} episodes\n"
+                result["items"].append({
+                    "title": item.title,
+                    "year": year,
+                    "seasonCount": season_count,
+                    "episodeCount": episode_count,
+                    "watched": watched
+                })
         
         elif target_section.type == 'artist':
             for item in paginated_items:
                 album_count = len(item.albums())
                 track_count = sum(len(album.tracks()) for album in item.albums())
                 
-                result += f"- {item.title} - {album_count} albums, {track_count} tracks\n"
+                result["items"].append({
+                    "title": item.title,
+                    "albumCount": album_count,
+                    "trackCount": track_count
+                })
         
         else:
             # Generic handler for other types
             for item in paginated_items:
-                result += f"- {item.title}\n"
+                result["items"].append({
+                    "title": item.title
+                })
         
         # Add pagination info
         if total_items > limit:
-            result += f"\nShowing items {offset+1}-{min(offset+limit, total_items)} of {total_items}."
+            result["pagination"] = {
+                "showing": {
+                    "from": offset + 1,
+                    "to": min(offset + limit, total_items),
+                    "of": total_items
+                }
+            }
+            
             if offset + limit < total_items:
-                result += f" Use offset={offset+limit} to see the next page."
+                result["pagination"]["nextOffset"] = offset + limit
             if offset > 0:
-                result += f" Use offset={max(0, offset-limit)} to see the previous page."
+                result["pagination"]["previousOffset"] = max(0, offset - limit)
         
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting library contents: {str(e)}"
+        return json.dumps({"error": f"Error getting library contents: {str(e)}"})

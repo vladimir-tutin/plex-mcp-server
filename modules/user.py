@@ -1,6 +1,7 @@
 from modules import mcp, connect_to_plex
 from plexapi.server import PlexServer # type: ignore
 import os
+import json
 
 try:
     from dotenv import load_dotenv # type: ignore
@@ -13,7 +14,7 @@ except ImportError:
     print("Install with: pip install python-dotenv")
 
 @mcp.tool()
-async def search_users(search_term: str = None) -> str:
+async def user_search_users(search_term: str = None) -> str:
     """Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided.
     
     Args:
@@ -45,17 +46,23 @@ async def search_users(search_term: str = None) -> str:
                     found_users.append(user)
             
             if not found_users:
-                return f"No users found matching '{search_term}'."
+                return json.dumps({"message": f"No users found matching '{search_term}'."})
             
             # Format the output for found users
-            result = f"Users matching '{search_term}':\n\n"
+            result = {
+                "searchTerm": search_term,
+                "usersFound": len(found_users),
+                "users": []
+            }
             
             for user in found_users:
                 is_owner = (user.username == account.username)
-                result += f"=== {'Owner' if is_owner else 'Shared User'} ===\n"
-                result += f"Username: {user.username}\n"
-                result += f"Email: {user.email if hasattr(user, 'email') else 'N/A'}\n"
-                result += f"Title: {user.title if hasattr(user, 'title') else user.username}\n"
+                user_data = {
+                    "role": "Owner" if is_owner else "Shared User",
+                    "username": user.username,
+                    "email": user.email if hasattr(user, 'email') else None,
+                    "title": user.title if hasattr(user, 'title') else user.username
+                }
                 
                 # Add servers this user has access to (for shared users)
                 if not is_owner and hasattr(user, 'servers'):
@@ -65,42 +72,42 @@ async def search_users(search_term: str = None) -> str:
                             for section in server.sections():
                                 sections.append(section.title)
                     
-                    if sections:
-                        result += f"Has access to libraries: {', '.join(sections)}\n"
-                    else:
-                        result += "No specific library access information available\n"
+                    user_data["libraries"] = sections if sections else []
                 
-                result += "\n"
+                result["users"].append(user_data)
             
-            return result
+            return json.dumps(result)
         else:
             # List all users
             if not all_users:
-                return "No shared users found. Only your account has access to this Plex server."
+                return json.dumps({"message": "No shared users found. Only your account has access to this Plex server."})
             
             # Format the output for all users
-            result = "Users with access to your Plex server:\n\n"
+            result = {
+                "totalUsers": len(all_users),
+                "owner": {
+                    "username": account.username,
+                    "email": account.email,
+                    "title": account.title
+                },
+                "sharedUsers": []
+            }
             
-            # First, add the owner's account
-            result += "=== Owner ===\n"
-            result += f"Username: {account.username}\n"
-            result += f"Email: {account.email}\n"
-            result += f"Title: {account.title}\n\n"
-            
-            # Then add all the shared users
-            result += "=== Shared Users ===\n"
+            # Add all the shared users
             for user in all_users:
                 if user.username != account.username:
-                    result += f"Username: {user.username}\n"
-                    result += f"Email: {user.email if hasattr(user, 'email') else 'N/A'}\n"
-                    result += f"Title: {user.title if hasattr(user, 'title') else user.username}\n\n"
+                    result["sharedUsers"].append({
+                        "username": user.username,
+                        "email": user.email if hasattr(user, 'email') else None,
+                        "title": user.title if hasattr(user, 'title') else user.username
+                    })
             
-            return result
+            return json.dumps(result)
     except Exception as e:
-        return f"Error searching users: {str(e)}"
+        return json.dumps({"error": f"Error searching users: {str(e)}"})
 
 @mcp.tool()
-async def get_user_info(username: str = PLEX_USERNAME) -> str:
+async def user_get_info(username: str = PLEX_USERNAME) -> str:
     """Get detailed information about a specific Plex user.
     
     Args:
@@ -114,17 +121,24 @@ async def get_user_info(username: str = PLEX_USERNAME) -> str:
         
         # Check if the username is the owner
         if username == account.username:
-            result = "=== Owner Account ===\n"
-            result += f"Username: {account.username}\n"
-            result += f"Email: {account.email}\n"
-            result += f"Title: {account.title}\n"
-            result += f"UUID: {account.uuid}\n"
-            result += f"Authentication Token: {account.authenticationToken[:5]}...{account.authenticationToken[-5:]} (truncated for security)\n"
-            result += f"Subscription: {'Active' if account.subscriptionActive else 'Inactive'}\n"
+            result = {
+                "role": "Owner",
+                "username": account.username,
+                "email": account.email,
+                "title": account.title,
+                "uuid": account.uuid,
+                "authToken": f"{account.authenticationToken[:5]}...{account.authenticationToken[-5:]} (truncated for security)",
+                "subscription": {
+                    "active": account.subscriptionActive
+                }
+            }
+            
             if account.subscriptionActive:
-                result += f"Subscription Features: {', '.join(account.subscriptionFeatures)}\n"
-            result += f"Joined At: {account.joinedAt}\n"
-            return result
+                result["subscription"]["features"] = account.subscriptionFeatures
+                
+            result["joinedAt"] = str(account.joinedAt)
+            
+            return json.dumps(result)
         
         # Search for the user in the friends list
         target_user = None
@@ -134,49 +148,57 @@ async def get_user_info(username: str = PLEX_USERNAME) -> str:
                 break
         
         if not target_user:
-            return f"User '{username}' not found among shared users."
+            return json.dumps({"error": f"User '{username}' not found among shared users."})
         
         # Format the output
-        result = "=== Shared User ===\n"
-        result += f"Username: {target_user.username}\n"
-        result += f"Email: {target_user.email if hasattr(target_user, 'email') else 'N/A'}\n"
-        result += f"Title: {target_user.title if hasattr(target_user, 'title') else target_user.username}\n"
-        result += f"ID: {target_user.id if hasattr(target_user, 'id') else 'N/A'}\n"
+        result = {
+            "role": "Shared User",
+            "username": target_user.username,
+            "email": target_user.email if hasattr(target_user, 'email') else None,
+            "title": target_user.title if hasattr(target_user, 'title') else target_user.username,
+            "id": target_user.id if hasattr(target_user, 'id') else None
+        }
         
         # Add servers and sections this user has access to
         if hasattr(target_user, 'servers'):
-            result += "\nServer Access:\n"
+            result["serverAccess"] = []
             for server in target_user.servers:
                 if server.name == account.title or server.name == account.username:
-                    result += f"Server: {server.name}\n"
-                    result += "Libraries with access:\n"
+                    server_data = {
+                        "name": server.name,
+                        "libraries": []
+                    }
                     for section in server.sections():
-                        result += f"- {section.title}\n"
+                        server_data["libraries"].append(section.title)
+                    result["serverAccess"].append(server_data)
         
         # Get user's devices if available
         if hasattr(target_user, 'devices') and callable(getattr(target_user, 'devices')):
             try:
                 devices = target_user.devices()
                 if devices:
-                    result += "\nDevices:\n"
+                    result["devices"] = []
                     for device in devices:
-                        result += f"- {device.name} ({device.platform})\n"
+                        device_data = {
+                            "name": device.name,
+                            "platform": device.platform
+                        }
                         if hasattr(device, 'clientIdentifier'):
-                            result += f"  ID: {device.clientIdentifier}\n"
+                            device_data["clientId"] = device.clientIdentifier
                         if hasattr(device, 'createdAt'):
-                            result += f"  Created At: {device.createdAt}\n"
+                            device_data["createdAt"] = str(device.createdAt)
                         if hasattr(device, 'lastSeenAt'):
-                            result += f"  Last Seen: {device.lastSeenAt}\n"
-                        result += "\n"
+                            device_data["lastSeenAt"] = str(device.lastSeenAt)
+                        result["devices"].append(device_data)
             except:
-                result += "\nDevice information unavailable\n"
+                result["devices"] = None
         
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting user info: {str(e)}"
+        return json.dumps({"error": f"Error getting user info: {str(e)}"})
 
 @mcp.tool()
-async def get_user_on_deck(username: str = PLEX_USERNAME) -> str:
+async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
     """Get on deck (in progress) media for a specific user.
     
     Args:
@@ -202,36 +224,42 @@ async def get_user_on_deck(username: str = PLEX_USERNAME) -> str:
                         break
                 
                 if not target_user:
-                    return f"User '{username}' not found."
+                    return json.dumps({"error": f"User '{username}' not found."})
                 
                 # For a shared user, try to switch to that user and get their on-deck items
                 # This requires admin privileges and may be limited by Plex server's capabilities
                 user_token = target_user.get_token(plex.machineIdentifier)
                 if not user_token:
-                    return f"Unable to access on-deck items for user '{username}'. Token not available."
+                    return json.dumps({"error": f"Unable to access on-deck items for user '{username}'. Token not available."})
                 
                 user_plex = PlexServer(plex._baseurl, user_token)
                 on_deck_items = user_plex.library.onDeck()
             except Exception as user_err:
-                return f"Error accessing user '{username}': {str(user_err)}"
+                return json.dumps({"error": f"Error accessing user '{username}': {str(user_err)}"})
         
         if not on_deck_items:
-            return f"No on-deck items found for user '{username}'."
+            return json.dumps({"message": f"No on-deck items found for user '{username}'."})
         
-        result = f"On deck for {username} ({len(on_deck_items)} items):\n"
+        result = {
+            "username": username,
+            "count": len(on_deck_items),
+            "items": []
+        }
         
         for item in on_deck_items:
             media_type = getattr(item, 'type', 'unknown')
             title = getattr(item, 'title', 'Unknown Title')
             
+            item_data = {
+                "type": media_type,
+                "title": title
+            }
+            
             if media_type == 'episode':
-                show = getattr(item, 'grandparentTitle', 'Unknown Show')
-                season = getattr(item, 'parentTitle', 'Unknown Season')
-                result += f"- {show} - {season} - {title}"
+                item_data["show"] = getattr(item, 'grandparentTitle', 'Unknown Show')
+                item_data["season"] = getattr(item, 'parentTitle', 'Unknown Season')
             else:
-                year = getattr(item, 'year', '')
-                year_str = f" ({year})" if year else ""
-                result += f"- {title}{year_str} [{media_type}]"
+                item_data["year"] = getattr(item, 'year', '')
             
             # Add progress information
             if hasattr(item, 'viewOffset') and hasattr(item, 'duration'):
@@ -243,34 +271,47 @@ async def get_user_on_deck(username: str = PLEX_USERNAME) -> str:
                 total_secs = (item.duration % 60000) // 1000
                 current_secs = (item.viewOffset % 60000) // 1000
                 
-                result += f" - {current_mins:02d}:{current_secs:02d}/{total_mins:02d}:{total_secs:02d} ({progress_pct:.1f}%)"
+                # Set progress as a single percentage value
+                item_data["progress"] = round(progress_pct, 1)
+                
+                # Add time info as separate fields
+                item_data["current_time"] = f"{current_mins}:{current_secs:02d}"
+                item_data["total_time"] = f"{total_mins}:{total_secs:02d}"
             
-            result += "\n"
+            result["items"].append(item_data)
         
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting on-deck items: {str(e)}"
+        return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
     
 @mcp.tool()
-async def get_user_watch_history(username: str = PLEX_USERNAME, limit: int = 10) -> str:
+async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10, content_type: str = None) -> str:
     """Get recent watch history for a specific user.
     
     Args:
         username: Name of the user to get watch history for
         limit: Maximum number of recently watched items to show
+        content_type: Optional filter for content type (movie, show, episode, etc)
     """
     try:
         plex = connect_to_plex()
+        account = plex.myPlexAccount()
         
-        # For the main account owner
-        if username.lower() == plex.myPlexAccount().username.lower():
-            history_items = plex.history(maxresults=limit)
-        else:
-            # For a different user, we need to get access to their account
-            try:
-                account = plex.myPlexAccount()
-                
-                # Find the user in the shared users
+        # Track items we've already seen to avoid duplicates when expanding search
+        seen_item_ids = set()
+        filtered_items = []
+        current_search_limit = limit * 2  # Start with 2x the requested limit
+        max_attempts = 4  # Maximum number of search expansions to prevent infinite loops
+        attempt = 0
+        
+        while len(filtered_items) < limit and attempt < max_attempts:
+            attempt += 1
+            
+            # For the main account owner
+            if username.lower() == account.username.lower():
+                history_items = plex.history(maxresults=current_search_limit)
+            else:
+                # For a different user, find them in shared users
                 target_user = None
                 for user in account.users():
                     if user.username.lower() == username.lower() or user.title.lower() == username.lower():
@@ -278,39 +319,83 @@ async def get_user_watch_history(username: str = PLEX_USERNAME, limit: int = 10)
                         break
                 
                 if not target_user:
-                    return f"User '{username}' not found."
+                    return json.dumps({"error": f"User '{username}' not found."})
                 
                 # For a shared user, use accountID to filter history
-                history_items = plex.history(maxresults=limit, accountID=target_user.id)
-            except Exception as user_err:
-                return f"Error accessing history for user '{username}': {str(user_err)}"
+                history_items = plex.history(maxresults=current_search_limit, accountID=target_user.id)
+            
+            # Filter by content type and deduplicate
+            for item in history_items:
+                item_id = getattr(item, 'ratingKey', None)
+                
+                # Skip if we've already processed this item
+                if item_id and item_id in seen_item_ids:
+                    continue
+                
+                # Add to seen items
+                if item_id:
+                    seen_item_ids.add(item_id)
+                
+                # Apply content type filter if specified
+                item_type = getattr(item, 'type', 'unknown')
+                if content_type and item_type.lower() != content_type.lower():
+                    continue
+                
+                filtered_items.append(item)
+                
+                # Stop if we've reached the limit
+                if len(filtered_items) >= limit:
+                    break
+            
+            # If we still need more items, double the search limit for next attempt
+            if len(filtered_items) < limit and history_items:
+                current_search_limit *= 2
+            else:
+                # Either we have enough items or there are no more to fetch
+                break
         
-        if not history_items:
-            return f"No watch history found for user '{username}'."
+        # If we couldn't find any matching items
+        if not filtered_items:
+            message = f"No watch history found for user '{username}'"
+            if content_type:
+                message += f" with content type '{content_type}'"
+            return json.dumps({"message": message})
         
-        result = f"Recent watch history for {username} ({len(history_items)} items):\n"
+        # Format the results
+        result = {
+            "username": username,
+            "count": len(filtered_items),
+            "requestedLimit": limit,
+            "contentType": content_type,
+            "items": []
+        }
         
-        for item in history_items:
+        # Add only the requested limit number of items
+        for item in filtered_items[:limit]:
             media_type = getattr(item, 'type', 'unknown')
             title = getattr(item, 'title', 'Unknown Title')
             
+            item_data = {
+                "type": media_type,
+                "title": title,
+                "ratingKey": getattr(item, 'ratingKey', None)
+            }
+            
             # Format based on media type
             if media_type == 'episode':
-                show = getattr(item, 'grandparentTitle', 'Unknown Show')
-                season = getattr(item, 'parentTitle', 'Unknown Season')
-                result += f"- {show} - {season} - {title}"
+                item_data["show"] = getattr(item, 'grandparentTitle', 'Unknown Show')
+                item_data["season"] = getattr(item, 'parentTitle', 'Unknown Season')
+                item_data["episodeNumber"] = getattr(item, 'index', None)
+                item_data["seasonNumber"] = getattr(item, 'parentIndex', None)
             else:
-                year = getattr(item, 'year', '')
-                year_str = f" ({year})" if year else ""
-                result += f"- {title}{year_str} [{media_type}]"
+                item_data["year"] = getattr(item, 'year', '')
             
             # Add viewed date if available
             if hasattr(item, 'viewedAt') and item.viewedAt:
-                viewed_at = item.viewedAt.strftime("%Y-%m-%d %H:%M")
-                result += f" (Viewed: {viewed_at})"
+                item_data["viewedAt"] = item.viewedAt.strftime("%Y-%m-%d %H:%M")
             
-            result += "\n"
+            result["items"].append(item_data)
         
-        return result
+        return json.dumps(result)
     except Exception as e:
-        return f"Error getting watch history: {str(e)}"
+        return json.dumps({"error": f"Error getting watch history: {str(e)}"})
