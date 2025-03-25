@@ -11,30 +11,70 @@ async def media_search(query: str, content_type: str = None) -> str:
     
     Args:
         query: Search term to look for
-        content_type: Optional content type to limit search to
+        content_type: Optional content type to limit search to (movie, show, episode, track, album, artist or use comma-separated values for HTTP API like movies,music,tv)
     """
     try:
-        plex = connect_to_plex()
-        results = []
-                
-        if content_type in ["movie", "show", "season", "episode", "album", "track", "artist"]:
-            # For audio content, ensure we search specifically in music libraries
-            if content_type in ["album", "track", "artist"]:
-                # Get all music libraries
-                music_libraries = [section for section in plex.library.sections() if section.type == 'artist']
-                
-                # Search in each music library
-                results = []
-                for library in music_libraries:
-                    lib_results = library.search(query=query, libtype=content_type)
-                    results.extend(lib_results)
-            else:
-                results = plex.library.search(query=query, libtype=content_type)
-        else:
-            # Global search
-            results = plex.library.search(query=query)
+        import requests
+        from urllib.parse import quote, urlencode
+
+        # Get Plex URL and token from environment
+        plex_url = os.environ.get("PLEX_URL", "").rstrip('/')
+        plex_token = os.environ.get("PLEX_TOKEN", "")
         
-        if not results:
+        if not plex_url or not plex_token:
+            return json.dumps({
+                "status": "error",
+                "message": "PLEX_URL or PLEX_TOKEN environment variables not set"
+            })
+        
+        # Prepare the search query parameters
+        params = {
+            "query": query,
+            "X-Plex-Token": plex_token,
+            "limit": 100,  # Ensure we get a good number of results
+            "includeCollections": 1,
+            "includeExternalMedia": 1
+        }
+        
+        # Add content type filter depending on the value provided
+        if content_type:
+            # Map content_type to searchTypes parameter if needed
+            content_type_map = {
+                "movie": "movies",
+                "show": "tv",
+                "episode": "tv",
+                "track": "music",
+                "album": "music",
+                "artist": "music"
+            }
+            
+            # If it contains a comma, it's already in searchTypes format
+            if ',' in content_type:
+                params["searchTypes"] = content_type
+            elif content_type in content_type_map:
+                # Use searchTypes for better results
+                params["searchTypes"] = content_type_map[content_type]
+                # Also add the specific type filter for more precise filtering
+                params["type"] = content_type
+            else:
+                # Just use the provided type directly
+                params["type"] = content_type
+                
+        # Add headers for JSON response
+        headers = {
+            'Accept': 'application/json'
+        }
+        
+        # Construct the URL
+        search_url = f"{plex_url}/library/search?{urlencode(params)}"
+        
+        # Make the request
+        response = requests.get(search_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # For consistency, return in the same format as before but using the direct HTTP response
+        if 'MediaContainer' not in data or 'SearchResult' not in data.get('MediaContainer', {}):
             return json.dumps({
                 "status": "success",
                 "message": f"No results found for '{query}'.",
@@ -42,77 +82,112 @@ async def media_search(query: str, content_type: str = None) -> str:
                 "results": []
             })
         
-        # Group results by type
+        # Format and organize search results
         results_by_type = {}
-        for item in results:
-            item_type = getattr(item, 'type', 'unknown')
-            if item_type not in results_by_type:
-                results_by_type[item_type] = []
-            results_by_type[item_type].append(item)
-        
-        # Format results organized by type
-        formatted_results = {}
         total_count = 0
         
-        for item_type, items in results_by_type.items():
-            formatted_items = []
-            for item in items:  # Limit to 10 items per type to avoid huge outputs
-                try:
-                    formatted_item = {
-                        "title": item.title,
-                        "type": item_type,
-                        "rating_key": getattr(item, 'ratingKey', None)
-                    }
-                    
-                    if item_type == 'movie':
-                        formatted_item["year"] = getattr(item, 'year', None)
-                        formatted_item["rating"] = getattr(item, 'rating', None)
-                    
-                    elif item_type == 'show':
-                        formatted_item["year"] = getattr(item, 'year', None)
-                        try:
-                            formatted_item["seasons_count"] = len(item.seasons()) if hasattr(item, 'seasons') and callable(item.seasons) else 0
-                        except:
-                            formatted_item["seasons_count"] = 0
-                    
-                    elif item_type == 'season':
-                        formatted_item["show_title"] = getattr(item, 'parentTitle', 'Unknown Show')
-                        formatted_item["season_number"] = getattr(item, 'index', None)
-                    
-                    elif item_type == 'episode':
-                        formatted_item["show_title"] = getattr(item, 'grandparentTitle', 'Unknown Show')
-                        formatted_item["season_number"] = getattr(item, 'parentIndex', None)
-                        formatted_item["episode_number"] = getattr(item, 'index', None)
-                    
-                    elif item_type == 'artist':
-                        try:
-                            formatted_item["albums_count"] = len(item.albums()) if hasattr(item, 'albums') and callable(item.albums) else 0
-                        except:
-                            formatted_item["albums_count"] = 0
-                    
-                    elif item_type == 'album':
-                        formatted_item["artist"] = getattr(item, 'parentTitle', 'Unknown Artist')
-                        try:
-                            formatted_item["tracks_count"] = len(item.tracks()) if hasattr(item, 'tracks') and callable(item.tracks) else 0
-                        except:
-                            formatted_item["tracks_count"] = 0
-                    
-                    elif item_type == 'track':
-                        formatted_item["artist"] = getattr(item, 'grandparentTitle', 'Unknown Artist')
-                        formatted_item["album"] = getattr(item, 'parentTitle', 'Unknown Album')
-                    
-                    formatted_items.append(formatted_item)
+        for search_result in data['MediaContainer']['SearchResult']:
+            if 'Metadata' not in search_result:
+                continue
                 
-                except Exception as format_error:
-                    # If there's an error formatting a particular item, include basic info
-                    formatted_items.append({
-                        "title": getattr(item, 'title', 'Unknown'),
-                        "type": item_type,
-                        "error": str(format_error)
-                    })
+            item = search_result['Metadata']
+            item_type = item.get('type', 'unknown')
             
-            formatted_results[item_type] = formatted_items
-            total_count += len(formatted_items)
+            # Apply additional filter only when content_type is specified and not comma-separated
+            # This is to ensure we only return the exact type the user asked for
+            if content_type and ',' not in content_type and content_type not in content_type_map:
+                if item_type != content_type:
+                    continue
+            
+            # When specific content_type is requested but internal mapping is used,
+            # ensure we only return that specific type
+            if content_type and content_type in content_type_map and ',' not in content_type:
+                if content_type != item_type:
+                    continue
+            
+            if item_type not in results_by_type:
+                results_by_type[item_type] = []
+            
+            # Extract relevant information based on item type
+            formatted_item = {
+                "title": item.get('title', 'Unknown'),
+                "type": item_type,
+                "rating_key": item.get('ratingKey')
+            }
+            
+            if item_type == 'movie':
+                formatted_item["year"] = item.get('year')
+                formatted_item["rating"] = item.get('rating')
+                formatted_item["summary"] = item.get('summary')
+                
+            elif item_type == 'show':
+                formatted_item["year"] = item.get('year')
+                formatted_item["summary"] = item.get('summary')
+                
+            elif item_type == 'season':
+                formatted_item["show_title"] = item.get('parentTitle', 'Unknown Show')
+                formatted_item["season_number"] = item.get('index')
+                
+            elif item_type == 'episode':
+                formatted_item["show_title"] = item.get('grandparentTitle', 'Unknown Show')
+                formatted_item["season_number"] = item.get('parentIndex')
+                formatted_item["episode_number"] = item.get('index')
+                
+            elif item_type == 'track':
+                formatted_item["artist"] = item.get('grandparentTitle', 'Unknown Artist')
+                formatted_item["album"] = item.get('parentTitle', 'Unknown Album')
+                formatted_item["track_number"] = item.get('index')
+                formatted_item["duration"] = item.get('duration')
+                formatted_item["library"] = item.get('librarySectionTitle')
+                
+            elif item_type == 'album':
+                formatted_item["artist"] = item.get('parentTitle', 'Unknown Artist')
+                formatted_item["year"] = item.get('parentYear')
+                formatted_item["library"] = item.get('librarySectionTitle')
+                
+            elif item_type == 'artist':
+                formatted_item["art"] = item.get('art')
+                formatted_item["thumb"] = item.get('thumb')
+                formatted_item["library"] = item.get('librarySectionTitle')
+            
+            # Add any media info if available
+            if 'Media' in item:
+                media_info = item['Media'][0] if isinstance(item['Media'], list) and item['Media'] else item['Media']
+                if isinstance(media_info, dict):
+                    if item_type in ['movie', 'show', 'episode']:
+                        formatted_item["resolution"] = media_info.get('videoResolution')
+                        formatted_item["container"] = media_info.get('container')
+                        formatted_item["codec"] = media_info.get('videoCodec')
+                    elif item_type in ['track']:
+                        formatted_item["audio_codec"] = media_info.get('audioCodec')
+                        formatted_item["bitrate"] = media_info.get('bitrate')
+                        formatted_item["container"] = media_info.get('container')
+            
+            # Add thumbnail/artwork info
+            if item_type == 'track':
+                if 'thumb' in item:
+                    formatted_item["thumb"] = item.get('thumb')
+                if 'parentThumb' in item:
+                    formatted_item["album_thumb"] = item.get('parentThumb')
+                if 'grandparentThumb' in item:
+                    formatted_item["artist_thumb"] = item.get('grandparentThumb')
+                if 'art' in item:
+                    formatted_item["art"] = item.get('art')
+            
+            results_by_type[item_type].append(formatted_item)
+            total_count += 1
+        
+        # For cleaner display, organize by type
+        type_order = ['track', 'album', 'artist', 'movie', 'show', 'season', 'episode']
+        ordered_results = {}
+        for type_name in type_order:
+            if type_name in results_by_type:
+                ordered_results[type_name] = results_by_type[type_name]
+        
+        # Add any remaining types
+        for type_name in results_by_type:
+            if type_name not in ordered_results:
+                ordered_results[type_name] = results_by_type[type_name]
         
         return json.dumps({
             "status": "success",
@@ -120,7 +195,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             "query": query,
             "content_type": content_type,
             "total_count": total_count,
-            "results_by_type": formatted_results
+            "results_by_type": ordered_results
         }, indent=2)
     except Exception as e:
         return json.dumps({

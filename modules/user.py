@@ -2,6 +2,10 @@ from modules import mcp, connect_to_plex
 from plexapi.server import PlexServer # type: ignore
 import os
 import json
+import time
+import requests
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Union
 
 try:
     from dotenv import load_dotenv # type: ignore
@@ -399,3 +403,201 @@ async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10,
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": f"Error getting watch history: {str(e)}"})
+
+@mcp.tool()
+async def user_get_statistics(time_period: str = "last_24_hours", username: str = None) -> str:
+    """Get statistics about user watch activity over different time periods.
+    
+    Args:
+        time_period: Time period for statistics - options: "last_24_hours", "last_7_days", "last_30_days", "last_90_days", "last_year", "all_time"
+        username: Optional. Filter statistics for a specific user. If not provided, returns statistics for all users.
+    """
+    try:
+        plex = connect_to_plex()
+        base_url = plex._baseurl
+        token = plex._token
+        
+        # Get the current epoch time
+        current_time = int(time.time())
+        
+        # Map time_period to Plex API parameters
+        time_mapping = {
+            "last_24_hours": {"timespan": 4, "at": current_time - 24*60*60},
+            "last_7_days": {"timespan": 3, "at": current_time - 7*24*60*60},
+            "last_30_days": {"timespan": 2, "at": current_time - 30*24*60*60},
+            "last_90_days": {"timespan": 2, "at": current_time - 90*24*60*60},
+            "last_year": {"timespan": 1, "at": current_time - 365*24*60*60},
+            "all_time": {"timespan": 1, "at": 0}
+        }
+        
+        if time_period not in time_mapping:
+            return json.dumps({"error": f"Invalid time period. Choose from: {', '.join(time_mapping.keys())}"})
+        
+        # Build the statistics URL
+        params = time_mapping[time_period]
+        stats_url = f"{base_url}/statistics/media?timespan={params['timespan']}&at>={params['at']}"
+        
+        # Add Plex headers
+        headers = {
+            'X-Plex-Token': token,
+            'Accept': 'application/json'
+        }
+        
+        # Make the request to get statistics
+        response = requests.get(stats_url, headers=headers)
+        if response.status_code != 200:
+            return json.dumps({"error": f"Failed to fetch statistics: HTTP {response.status_code}"})
+        
+        data = response.json()
+        
+        # Get data from response
+        container = data.get('MediaContainer', {})
+        device_list = container.get('Device', [])
+        account_list = container.get('Account', [])
+        stats_list = container.get('StatisticsMedia', [])
+        
+        # Create lookup dictionaries for accounts and devices
+        account_lookup: Dict[int, Dict[str, Any]] = {}
+        for account in account_list:
+            account_lookup[account.get('id')] = {
+                'name': account.get('name'),
+                'key': account.get('key'),
+                'thumb': account.get('thumb')
+            }
+        
+        device_lookup: Dict[int, Dict[str, Any]] = {}
+        for device in device_list:
+            device_lookup[device.get('id')] = {
+                'name': device.get('name'),
+                'platform': device.get('platform'),
+                'clientIdentifier': device.get('clientIdentifier')
+            }
+        
+        # Filter by username if specified
+        target_account_id = None
+        if username:
+            # Get the account ID for the specified username
+            account = plex.myPlexAccount()
+            
+            # Check if the username matches the owner
+            if username.lower() == account.username.lower():
+                # Find the owner's account ID in the account list
+                for acc in account_list:
+                    if acc.get('name').lower() == username.lower():
+                        target_account_id = acc.get('id')
+                        break
+            else:
+                # Check shared users
+                for user in account.users():
+                    if user.username.lower() == username.lower() or (hasattr(user, 'title') and user.title.lower() == username.lower()):
+                        # Find this user's account ID in the account list
+                        for acc in account_list:
+                            if acc.get('name').lower() == user.username.lower():
+                                target_account_id = acc.get('id')
+                                break
+                        break
+            
+            if target_account_id is None:
+                return json.dumps({"error": f"User '{username}' not found in the statistics data."})
+        
+        # Process the statistics data
+        user_stats: Dict[int, Dict[str, Any]] = {}
+        
+        # Media type mapping
+        media_type_map = {
+            1: "movie", 
+            4: "episode", 
+            10: "track",
+            100: "photo"
+        }
+        
+        for stat in stats_list:
+            account_id = stat.get('accountID')
+            
+            # Skip if we're filtering by user and this isn't the target user
+            if target_account_id is not None and account_id != target_account_id:
+                continue
+                
+            device_id = stat.get('deviceID')
+            duration = stat.get('duration', 0)  # Duration in seconds
+            count = stat.get('count', 0)  # Number of items played
+            metadata_type = stat.get('metadataType', 0)
+            media_type = media_type_map.get(metadata_type, f"unknown-{metadata_type}")
+            
+            # Initialize user stats if not already present
+            if account_id not in user_stats:
+                account_info = account_lookup.get(account_id, {'name': f"Unknown User {account_id}"})
+                user_stats[account_id] = {
+                    'user': account_info.get('name'),
+                    'user_thumb': account_info.get('thumb'),
+                    'total_duration': 0,
+                    'total_plays': 0,
+                    'media_types': {},
+                    'devices': {}
+                }
+            
+            # Update total duration and play count
+            user_stats[account_id]['total_duration'] += duration
+            user_stats[account_id]['total_plays'] += count
+            
+            # Update media type stats
+            if media_type not in user_stats[account_id]['media_types']:
+                user_stats[account_id]['media_types'][media_type] = {
+                    'duration': 0,
+                    'count': 0
+                }
+            user_stats[account_id]['media_types'][media_type]['duration'] += duration
+            user_stats[account_id]['media_types'][media_type]['count'] += count
+            
+            # Update device stats
+            if device_id is not None:
+                device_info = device_lookup.get(device_id, {'name': f"Unknown Device {device_id}", 'platform': 'unknown'})
+                device_name = device_info.get('name')
+                
+                if device_name not in user_stats[account_id]['devices']:
+                    user_stats[account_id]['devices'][device_name] = {
+                        'platform': device_info.get('platform'),
+                        'duration': 0,
+                        'count': 0
+                    }
+                user_stats[account_id]['devices'][device_name]['duration'] += duration
+                user_stats[account_id]['devices'][device_name]['count'] += count
+        
+        # Format duration for better readability in each stat entry
+        for account_id, stats in user_stats.items():
+            # Format total duration
+            hours, remainder = divmod(stats['total_duration'], 3600)
+            minutes, seconds = divmod(remainder, 60)
+            stats['formatted_duration'] = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+            
+            # Format media type durations
+            for media_type, media_stats in stats['media_types'].items():
+                hours, remainder = divmod(media_stats['duration'], 3600)
+                minutes, seconds = divmod(remainder, 60)
+                media_stats['formatted_duration'] = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+            
+            # Format device durations
+            for device_name, device_stats in stats['devices'].items():
+                hours, remainder = divmod(device_stats['duration'], 3600)
+                minutes, seconds = divmod(remainder, 60)
+                device_stats['formatted_duration'] = f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+        
+        # Sort users by total duration (descending)
+        sorted_users = sorted(
+            user_stats.values(), 
+            key=lambda x: x['total_duration'], 
+            reverse=True
+        )
+        
+        # Format the final result
+        result = {
+            "time_period": time_period,
+            "user_filter": username,
+            "total_users": len(sorted_users),
+            "stats_generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "users": sorted_users
+        }
+        
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({"error": f"Error getting user statistics: {str(e)}"})

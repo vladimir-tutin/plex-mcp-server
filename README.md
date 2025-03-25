@@ -1,123 +1,212 @@
 # Plex MCP Server
 
-Plex MCP Server is a versatile control panel for your Plex Media Server, allowing AI assistants and other applications to interact with your Plex libraries, collections, media, and users.
+A powerful Model-Controller-Protocol server for interacting with Plex Media Server, providing a standardized JSON-based interface for automation, scripting, and integration with other tools.
 
-## Features
+## Overview
 
-- Comprehensive access to Plex libraries
-- Media search and playback control
-- Collection and playlist management
-- Media metadata editing
-- User management
-- Server monitoring
+Plex MCP Server creates a unified API layer on top of the Plex Media Server API, offering:
+
+- **Standardized JSON responses** for compatibility with automation tools, AI systems, and other integrations
+- **Multiple transport methods** (stdio and SSE) for flexible integration options
+- **Rich command set** for managing libraries, collections, playlists, media, users, and more
+- **Error handling** with consistent response formats
+- **Easy integration** with automation platforms (like n8n) and custom scripts
+
+## Requirements
+
+- Python 3.8+
+- Plex Media Server with valid authentication token
+- Access to the Plex server (locally or remotely)
 
 ## Installation
 
 1. Clone this repository
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-3. Configure your Plex connection:
-   - Create a `.env` file with your Plex URL and token:
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Create a `.env` file based on the `.env.example`:
+   ```
+   cp .env.example .env
+   ```
+4. Add your Plex server URL and token to the `.env` file:
    ```
    PLEX_URL=http://your-plex-server:32400
    PLEX_TOKEN=your-plex-token
    ```
-   - Alternatively, set environment variables directly:
-   ```bash
-   export PLEX_URL=http://your-plex-server:32400
-   export PLEX_TOKEN=your-plex-token
-   ```
 
-## Running the Server
+## Usage
 
-The server can be launched in two different modes depending on your needs:
+The server can be run in two transport modes: stdio (Standard Input/Output) or SSE (Server-Sent Events). Each mode is suitable for different integration scenarios.
 
-### Command Line Mode (Default)
+### Running with stdio Transport
 
-Run the server directly from the command line:
+The stdio transport is ideal for direct integration with applications like Claude Desktop or Cursor. It accepts commands via standard input and outputs results to standard output in JSON format.
 
+Basic command line usage:
 ```bash
-python plex_mcp_server.py
-# or explicitly specify stdio transport
-python plex_mcp_server.py --transport stdio
+python3 -m plex_mcp
+```
+or
+```bash
+python3 plex_mcp_server.py --transport stdio
 ```
 
-### Web Server Mode
-
-Run the server as a web service to allow access from web applications:
-
-```bash
-python plex_mcp_server.py --transport sse --host 0.0.0.0 --port 8080
-```
-
-In this mode, the server endpoints are:
-- Server URL: `http://[host]:[port]`
-- SSE endpoint: `/sse`
-- Message endpoint: `/messages/`
-
-## Integrating with Claude Desktop or Cursor
-
-You can easily integrate Plex MCP Server with Claude Desktop or other MCP-compatible applications.
-
-### Claude Desktop Integration
-
-1. Open Claude Desktop and go to Settings → Developer → Edit Config
-2. Add the following to your configuration file (replacing paths as needed):
-
+#### Configuration Example for Claude Desktop/Cursor
+Add this configuration to your application's settings:
 ```json
 {
-  "mcpServers": {
-    "plex-server": {
-      "command": "python",
-      "args": [
-        "C:\\path\\to\\plex_mcp_server.py",
-        "--transport",
-        "stdio"
-      ],
-      "env": {
-        "PLEX_URL": "http://your-plex-server:32400",
-        "PLEX_TOKEN": "your-plex-token"
-      }
+  "plex": {
+    "command": "python",
+    "args": [
+      "C://Users//User//Documents//plex-mcp-server//plex_mcp_server.py",
+      "--transport=stdio"
+    ],
+    "env": {
+      "PLEX_URL":"http://localhost:32400",
+      "PLEX_TOKEN":"av3khi56h634v3",
+      "PLEX_USERNAME:"Administrator"
     }
   }
 }
 ```
 
-3. Restart Claude Desktop
-4. Look for the tools icon in the input box to access Plex functions
-   
-## Available Tools
+### Running with SSE Transport
 
-Plex MCP Server provides numerous tools for interacting with your Plex server:
+The Server-Sent Events (SSE) transport provides a web-based interface for integration with web applications and services.
 
-- Library management: list, refresh, scan libraries
-- Media operations: search, play, edit metadata
-- Collection management: create, edit, delete collections
-- Playlist handling: create and manage playlists
-- User information: view activity, history, and details
-- Server monitoring: logs, active sessions
+Start the server:
+```bash
+python3 plex_mcp_server.py --transport sse --host 0.0.0.0 --port 3001
+```
 
-## Environment Variables
+Default options:
+- Host: 0.0.0.0 (accessible from any network interface)
+- Port: 3001
+- SSE endpoint: `/sse`
+- Message endpoint: `/messages/`
 
-- `PLEX_URL`: URL of your Plex server (required)
-- `PLEX_TOKEN`: Authentication token for your Plex server (required)
-- `PLEX_USERNAME`: Plex username (optional, alternative to token)
-- `PLEX_PASSWORD`: Plex password (optional, alternative to token)
-- `PLEX_SERVER_NAME`: Name of your Plex server (required if using username/password)
+#### Configuration Example for SSE Client
+When the server is running in SSE mode, configure your client to connect using:
+```json
+{
+  "plex": {
+    "url": "http://localhost:3001/sse"
+  }
+}
+```
 
-## Restarting the Server
+With SSE, you can connect to the server via web applications or tools that support SSE connections.
 
-If you make changes to the configuration or the server is unresponsive, restart it using the same command you used to start it initially.
+## Command Modules
 
-## Troubleshooting
+### Library Module
+- List libraries
+- Get library statistics
+- Refresh libraries
+- Scan for new content
+- Get library details
+- Get recently added content
+- Get library contents
 
-- Verify your Plex server is running and accessible
-- Check that your Plex token is valid
-- Ensure required Python packages are installed
-- Check logs for detailed error information
+### Media Module
+- Search for media
+- Get detailed media information
+- Edit media metadata
+- Delete media
+- Get and set artwork
+- List available artwork
+
+### Playlist Module
+- List playlists
+- Get playlist contents
+- Create playlists
+- Delete playlists
+- Add items to playlists
+- Remove items from playlists
+- Edit playlists
+- Upload custom poster images
+- Copy playlists to other users
+
+### Collection Module
+- List collections
+- Create collections
+- Add items to collections
+- Remove items from collections
+- Edit collections
+
+### User Module
+- Search for users
+- Get user information
+- Get user's on deck content
+- Get user watch history
+
+### Sessions Module
+- Get active sessions
+- Get media playback history
+
+### Server Module
+- Get Plex server logs
+- Get server information
+- Get bandwidth statistics
+- Get current resource usage
+- Get and run butler tasks
+- Get server alerts
+
+### Client Module
+- List clients
+- Get client details
+- Get client timelines
+- Get active clients
+- Start media playback
+- Control playback (play, pause, etc.)
+- Navigate client interfaces
+- Set audio/subtitle streams
+
+**Note:** The Client Module functionality is currently limited and not fully implemented. Some features may not work as expected or may be incomplete.
+
+## Response Format
+
+All commands return standardized JSON responses for maximum compatibility with various tools, automation platforms, and AI systems. This consistent structure makes it easy to process responses programmatically.
+
+For successful operations, the response typically includes:
+```json
+{
+  "success_field": true,
+  "relevant_data": "value",
+  "additional_info": {}
+}
+```
+
+For errors, the response format is:
+```json
+{
+  "error": "Error message describing what went wrong"
+}
+```
+
+For multiple matches (when searching by title), results are returned as an array of objects with identifying information:
+```json
+[
+  {
+    "title": "Item Title",
+    "id": 12345,
+    "type": "movie",
+    "year": 2023
+  },
+  {
+    "title": "Another Item",
+    "id": 67890,
+    "type": "show",
+    "year": 2022
+  }
+]
+```
+
+## Debugging
+
+For development and debugging, you can use the included `watcher.py` script which monitors for changes and automatically restarts the server.
 
 ## License
 
-[License information]
+[Include your license information here]

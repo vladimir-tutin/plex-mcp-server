@@ -25,7 +25,8 @@ from modules.user import (
     user_search_users,
     user_get_info,
     user_get_on_deck,
-    user_get_watch_history
+    user_get_watch_history,
+    user_get_statistics
 )
 # Search module functions
 from modules.sessions import (
