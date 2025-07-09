@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/vladimir-tutin-plex-mcp-server-badge.png)](https://mseep.ai/app/vladimir-tutin-plex-mcp-server)
+
 # Plex MCP Server
 
 A powerful Model-Controller-Protocol server for interacting with Plex Media Server, providing a standardized JSON-based interface for automation, scripting, and integration with other tools.
