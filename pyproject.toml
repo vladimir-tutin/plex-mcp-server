@@ -1,0 +1,23 @@
+[project]
+name = "plex-mcp-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.13.2",
+    "mcp>=1.20.0",
+    "plexapi>=4.15.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "starlette>=0.28.0",
+    "uvicorn>=0.23.0",
+    "uvicorn[standard]>=0.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true

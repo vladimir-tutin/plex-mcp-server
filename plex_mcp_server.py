@@ -5,6 +5,7 @@ from starlette.routing import Mount, Route # type: ignore
 from mcp.server import Server # type: ignore
 from mcp.server.sse import SseServerTransport # type: ignore
 from starlette.requests import Request # type: ignore
+from starlette.responses import StreamingResponse
 
 # Import the main mcp instance from modules
 from modules import mcp, connect_to_plex
@@ -89,17 +90,30 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     """Create a Starlette application that can serve the provided mcp server with SSE."""
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request: Request) -> None:
-        async with sse.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
-            await mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp_server.create_initialization_options(),
-            )
+    async def handle_sse(request: Request):
+        sse = SseServerTransport("/messages/")
+
+        async def event_generator():
+            async with sse.connect_sse(
+                request.scope,
+                request.receive,
+                request._send,
+            ) as (read_stream, write_stream):
+                await mcp_server.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server.create_initialization_options(),
+                )
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+            }
+        )
 
     return Starlette(
         debug=debug,

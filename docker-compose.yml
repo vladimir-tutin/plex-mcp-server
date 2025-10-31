@@ -1,0 +1,12 @@
+services:
+  plex-mcp-sse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "3001:3001"
+    volumes:
+      - .:/app
+    restart: unless-stopped
