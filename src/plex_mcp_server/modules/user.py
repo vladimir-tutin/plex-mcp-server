@@ -1,4 +1,4 @@
-from modules import mcp, connect_to_plex
+from . import mcp, connect_to_plex
 from plexapi.server import PlexServer # type: ignore
 import os
 import json

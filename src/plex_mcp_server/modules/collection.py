@@ -1,6 +1,6 @@
 from plexapi.collection import Collection # type: ignore
 from typing import List, Dict, Any
-from modules import mcp, connect_to_plex
+from . import mcp, connect_to_plex
 import os
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 import json

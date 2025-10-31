@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment
+.env
+.env.example
+
+# Tests
+tests/
+.pytest_cache/
+
+# Old files
+main.py
+plex_mcp_server.py
+watcher.py
+requirements.txt
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Documentation (keep README.md for package metadata)
+# README.md is needed for pyproject.toml

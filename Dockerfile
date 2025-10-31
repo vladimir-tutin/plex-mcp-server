@@ -1,9 +1,9 @@
-# Stage 1: Install uv + build virtual environment
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+# Use Python base image with uv
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
-ENV UV_PYTHON_DOWNLOADS=0
+# Set environment for build
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
 
 # Set workdir
 WORKDIR /app
@@ -14,23 +14,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --no-dev
 
 # ---- 2. Copy source + install the project itself ----
-COPY . /app
+COPY src ./src
+COPY README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --all-extras
+    uv sync --frozen --no-dev
 
-
-# Stage 2: Runtime image (minimal)
-FROM python:3.13-slim-bookworm
-
-# Copy the complete virtual environment
-COPY --from=builder --chown=app:app /app /app
-
+# Set runtime environment to use venv
 ENV PATH="/app/.venv/bin:$PATH" \
     VIRTUAL_ENV="/app/.venv" \
     PYTHONUNBUFFERED=1
 
+# Expose port (default, can be overridden by FASTMCP_PORT env var)
 EXPOSE 3001
 
-WORKDIR /app
-
-CMD ["python", "plex_mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "3001"]
+# Run the MCP server (configuration via environment variables)
+CMD ["python", "-m", "plex_mcp_server"]
