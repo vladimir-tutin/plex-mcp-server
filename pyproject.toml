@@ -29,7 +29,56 @@ packages = ["src/plex_mcp_server"]
 package = true
 
 [dependency-groups]
-dev-dependencies = [
+dev = [
+    "pre-commit>=4.3.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "ruff>=0.14.3",
 ]
+
+[tool.ruff]
+# Set the line length to match common Python standards
+line-length = 100
+target-version = "py313"
+
+# Enable auto-fixing where possible
+fix = true
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# Enable recommended rules
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+]
+
+# Ignore specific rules if needed
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["plex_mcp_server"]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+# Indent with spaces
+indent-style = "space"

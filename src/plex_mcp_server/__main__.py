@@ -1,6 +1,7 @@
 """Entry point for running the package as a module."""
 
 import os
+
 import uvicorn  # type: ignore
 
 # Import the main mcp instance from modules
@@ -14,12 +15,12 @@ from .server import create_starlette_app
 def main():
     """Main entry point for the application."""
     # Get configuration from environment variables
-    host = os.environ.get('FASTMCP_HOST', '0.0.0.0')
-    port = int(os.environ.get('FASTMCP_PORT', '3001'))
+    host = os.environ.get("FASTMCP_HOST", "0.0.0.0")
+    port = int(os.environ.get("FASTMCP_PORT", "3001"))
 
-    print(f"Starting Plex MCP Server with SSE transport...")
+    print("Starting Plex MCP Server with SSE transport...")
     print(f"Server will listen on http://{host}:{port}")
-    print(f"SSE endpoint: /sse")
+    print("SSE endpoint: /sse")
     print(f"Plex URL: {os.environ.get('PLEX_URL', 'Not set')}")
 
     # Run with SSE transport using proper Starlette app
