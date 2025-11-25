@@ -14,8 +14,12 @@ except ImportError:
     print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
     print("Install with: pip install python-dotenv")
 
-# Initialize FastMCP server
-mcp = FastMCP("plex-server")
+# Initialize FastMCP server with configurable host/port from env
+mcp = FastMCP(
+    "plex-server",
+    host=os.environ.get("MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("MCP_PORT", "8000"))
+)
 
 # Global variables for Plex connection
 plex_url = os.environ.get("PLEX_URL", "")

@@ -7,7 +7,7 @@ A powerful Model-Controller-Protocol server for interacting with Plex Media Serv
 Plex MCP Server creates a unified API layer on top of the Plex Media Server API, offering:
 
 - **Standardized JSON responses** for compatibility with automation tools, AI systems, and other integrations
-- **Multiple transport methods** (stdio and SSE) for flexible integration options
+- **Multiple transport methods** (stdio, SSE, and streamable-http) for flexible integration options
 - **Rich command set** for managing libraries, collections, playlists, media, users, and more
 - **Error handling** with consistent response formats
 - **Easy integration** with automation platforms (like n8n) and custom scripts
@@ -37,7 +37,7 @@ Plex MCP Server creates a unified API layer on top of the Plex Media Server API,
 
 ## Usage
 
-The server can be run in two transport modes: stdio (Standard Input/Output) or SSE (Server-Sent Events). Each mode is suitable for different integration scenarios.
+The server can be run in three transport modes: stdio (Standard Input/Output), SSE (Server-Sent Events), or streamable-http. Each mode is suitable for different integration scenarios.
 
 ### Running with stdio Transport
 
@@ -97,6 +97,24 @@ When the server is running in SSE mode, configure your client to connect using:
 ```
 
 With SSE, you can connect to the server via web applications or tools that support SSE connections.
+
+### Running with Streamable-HTTP Transport
+
+The streamable-http transport provides a RESTful API interface for integration with web services and applications.
+
+Start the server:
+```bash
+python3 plex_mcp_server.py --transport streamable-http
+```
+
+Default options:
+- Host: 127.0.0.1
+- Port: 8000
+
+The streamable-http transport is ideal for containerized deployments and microservice architectures. When running in Docker:
+```bash
+docker run --rm -p 8000:8000 plex-mcp-server --transport streamable-http
+```
 
 ## Command Modules
 
