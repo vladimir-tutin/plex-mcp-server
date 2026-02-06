@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plex-mcp-server"
-version = "1.0.0"
+version = "1.0.1"
 description = "MCP server for Plex Media Server - Control your Plex server via Claude Desktop, Cursor, or any MCP-compatible client"
 readme = "README.md"
 license = {text = "MIT"}

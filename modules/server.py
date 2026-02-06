@@ -511,3 +511,106 @@ async def server_run_butler_task(task_name: str) -> str:
             "message": str(e),
             "traceback": traceback.format_exc()
         }, indent=4)
+
+@mcp.tool()
+async def server_empty_trash(library_name: str = None) -> str:
+    """Empty trash for a specific library or all libraries.
+    
+    This permanently deletes all items that have been marked for deletion.
+    
+    Args:
+        library_name: Optional name of the library to empty trash for. If not provided, empties trash for all libraries.
+    
+    Returns:
+        Success or error message
+    """
+    try:
+        plex = connect_to_plex()
+        
+        if library_name:
+            # Find the specific library
+            all_sections = plex.library.sections()
+            target_section = None
+            
+            for section in all_sections:
+                if section.title.lower() == library_name.lower():
+                    target_section = section
+                    break
+            
+            if not target_section:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
+                }, indent=4)
+            
+            # Empty trash for the specific library
+            target_section.emptyTrash()
+            return json.dumps({
+                "status": "success",
+                "message": f"Trash emptied for library '{target_section.title}'."
+            }, indent=4)
+        else:
+            # Empty trash for all libraries
+            plex.library.emptyTrash()
+            return json.dumps({
+                "status": "success",
+                "message": "Trash emptied for all libraries."
+            }, indent=4)
+            
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error emptying trash: {str(e)}"
+        }, indent=4)
+
+@mcp.tool()
+async def server_optimize_database() -> str:
+    """Optimize the Plex database.
+    
+    This runs database optimization to improve performance and reduce database size.
+    
+    Returns:
+        Success or error message
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Optimize the database
+        plex.library.optimize()
+        
+        return json.dumps({
+            "status": "success",
+            "message": "Database optimization started. This may take some time to complete."
+        }, indent=4)
+            
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error optimizing database: {str(e)}"
+        }, indent=4)
+
+@mcp.tool()
+async def server_clean_bundles() -> str:
+    """Clean unused media bundles.
+    
+    This removes unused media bundles (metadata, artwork) that are no longer associated with any media items.
+    
+    Returns:
+        Success or error message
+    """
+    try:
+        plex = connect_to_plex()
+        
+        # Clean bundles
+        plex.library.cleanBundles()
+        
+        return json.dumps({
+            "status": "success",
+            "message": "Bundle cleaning started. This removes unused metadata and artwork."
+        }, indent=4)
+            
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error cleaning bundles: {str(e)}"
+        }, indent=4)
