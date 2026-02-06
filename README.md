@@ -52,7 +52,7 @@ pip install .
 
 You can configure your Plex credentials in several ways:
 
-### Option A: Command Line Arguments (Recommended for Claude Desktop)
+### Option A: Command Line Arguments
 
 Pass credentials directly when running:
 ```bash
