@@ -6,12 +6,18 @@ import asyncio
 import requests
 
 @mcp.tool()
-async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -> str:
+async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server", start_line: int = None, list_files: bool = False, search_term: str = None) -> str:
     """Get Plex server logs.
     
     Args:
-        num_lines: Number of log lines to retrieve
-        log_type: Type of log to retrieve (server, scanner, transcoder, updater)
+        num_lines: Number of log lines (or matches) to retrieve (default: 100)
+        log_type: Type of log to retrieve (server, scanner, transcoder, updater) or specific filename/partial match
+        start_line: Starting line number to retrieve (0-indexed). If None, retrieves last num_lines.
+        list_files: If True, lists all available log files instead of content.
+        search_term: Text to search for in the logs. If provided, returns matching lines with line numbers.
+        
+    Returns:
+        String containing log lines, search results, or file list.
     """
     try:
         import zipfile
@@ -20,77 +26,158 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -
         import os
         import shutil
         import traceback
+        import fnmatch
         
         plex = connect_to_plex()
             
-        # Map common log type names to the actual file names
-        log_type_map = {
-            'server': 'Plex Media Server.log',
-            'scanner': 'Plex Media Scanner.log',
-            'transcoder': 'Plex Transcoder.log',
-            'updater': 'Plex Update Service.log'
-        }
-        
-        log_file_name = log_type_map.get(log_type.lower(), log_type)
-            
         # Download logs from the Plex server
+        # This returns a path to a zip file or raw zip data
         logs_path_or_data = plex.downloadLogs()
         
+        # Function to process the zip file
+        def process_zip(zip_ref):
+            all_files = zip_ref.namelist()
+            
+            # If list_files is requested, just return the list
+            if list_files:
+                file_list = sorted(all_files)
+                return "Available log files:\n" + "\n".join(f"- {f}" for f in file_list)
+                
+            # Determine which file to read
+            log_file_path = None
+            
+            # 1. Try mapping for known types
+            log_type_map = {
+                'server': 'Plex Media Server.log',
+                'scanner': 'Plex Media Scanner.log',
+                'transcoder': 'Plex Transcoder Statistics.log',
+                'updater': 'Plex Update Service.log',
+                'tuner': 'Plex Tuner Service.log',
+                'scanner-deep-analysis': 'Plex Media Scanner Deep Analysis.log',
+                'credits': 'Plex Media Scanner Credits.log',
+                'chapter-thumbnails': 'Plex Media Scanner Chapter Thumbnails.log',
+                'crash-uploader': 'Plex Crash Uploader.log'
+            }
+            
+            target_name = log_type_map.get(log_type.lower(), log_type)
+            
+            # 2. Try exact match in zip
+            if target_name in all_files:
+                log_file_path = target_name
+            else:
+                # 3. Try case-insensitive exact match
+                for f in all_files:
+                    if f.lower() == target_name.lower():
+                        log_file_path = f
+                        break
+                
+                # 4. Try partial match / suffix (e.g. searching for ".1.log")
+                if not log_file_path:
+                    candidates = []
+                    for f in all_files:
+                        if target_name.lower() in f.lower():
+                            candidates.append(f)
+                    
+                    if len(candidates) == 1:
+                        log_file_path = candidates[0]
+                    elif len(candidates) > 1:
+                        # Prefer exact suffix match if possible? Or just return the first/shortest?
+                        # Let's try to match if the user provided extension like .1.log
+                        for c in candidates:
+                            if c.endswith(target_name) or c.lower().endswith(target_name.lower()):
+                                log_file_path = c
+                                break
+                        if not log_file_path:
+                            # Default to first candidate
+                            log_file_path = candidates[0]
+
+            if not log_file_path:
+                return f"Could not find log file matching '{log_type}'. Available files:\n" + "\n".join(all_files[:20]) + ("\n..." if len(all_files) > 20 else "")
+
+            # Read the file
+            with zip_ref.open(log_file_path) as f:
+                content = f.read().decode('utf-8', errors='ignore')
+                
+            lines = content.splitlines()
+            total_lines = len(lines)
+            
+            # Handle Search
+            if search_term:
+                matches = []
+                search_lower = search_term.lower()
+                for i, line in enumerate(lines):
+                    if search_lower in line.lower():
+                        matches.append(f"Line {i+1}: {line}")
+                        
+                # Pagination/Limits for search results
+                # Only use start_line if provided, otherwise show first X matches? 
+                # Or use num_lines to limit count.
+                
+                total_matches = len(matches)
+                if total_matches == 0:
+                    return f"No matches found for '{search_term}' in {log_file_path}."
+                
+                start_idx = start_line if start_line is not None else 0
+                end_idx = min(start_idx + num_lines, total_matches)
+                
+                result_lines = matches[start_idx:end_idx]
+                
+                header = f"Search results for '{search_term}' in {log_file_path} (Matches {start_idx+1}-{end_idx} of {total_matches}):\n\n"
+                return header + "\n".join(result_lines)
+
+            # Handle Standard Line Reading
+            if start_line is not None:
+                # Specific range requested
+                start_idx = max(0, start_line)
+                end_idx = min(start_idx + num_lines, total_lines)
+                result_lines = lines[start_idx:end_idx]
+                range_desc = f"lines {start_idx+1}-{end_idx}"
+            else:
+                # Tail requested (default)
+                # If num_lines >= total, return all. Else return last num_lines
+                if num_lines >= total_lines:
+                    result_lines = lines
+                    range_desc = f"all {total_lines} lines"
+                else:
+                    result_lines = lines[-num_lines:]
+                    range_desc = f"last {len(result_lines)} lines"
+
+            return f"Log: {log_file_path} ({range_desc} of {total_lines}):\n\n" + "\n".join(result_lines)
+
+
         # Handle zipfile content based on what we received
         if isinstance(logs_path_or_data, str) and os.path.exists(logs_path_or_data) and logs_path_or_data.endswith('.zip'):
             # We received a path to a zip file
-            with zipfile.ZipFile(logs_path_or_data, 'r') as zip_ref:
-                log_content = extract_log_from_zip(zip_ref, log_file_name)
-                
-            # Clean up the downloaded zip if desired
             try:
-                os.remove(logs_path_or_data)
-            except:
-                pass  # Ignore errors in cleanup
+                with zipfile.ZipFile(logs_path_or_data, 'r') as zip_ref:
+                    return process_zip(zip_ref)
+            finally:
+                # Clean up the downloaded zip if desired
+                try:
+                    os.remove(logs_path_or_data)
+                except:
+                    pass
         else:
-            # We received the actual data - process in memory
+            # We received the actual data or path to data - process in memory
             if isinstance(logs_path_or_data, str):
+                # Check if it looks like a path but failed previous check?
+                # The mock/real connect_to_plex might return bytes or path.
+                # If it's a string and not a file, treat as bytes?
+                # Actually plexapi.downloadLogs() returns url or content? 
+                # Let's assume content if not file.
                 logs_path_or_data = logs_path_or_data.encode('utf-8')
                 
             try:
                 # Create an in-memory zip file
                 zip_buffer = io.BytesIO(logs_path_or_data)
                 with zipfile.ZipFile(zip_buffer, 'r') as zip_ref:
-                    log_content = extract_log_from_zip(zip_ref, log_file_name)
+                    return process_zip(zip_ref)
             except zipfile.BadZipFile:
-                return f"Downloaded data is not a valid zip file. First 100 bytes: {logs_path_or_data[:100]}"
+                # If it's not a zip, maybe it's just raw text? Unlikely for downloadLogs
+                return f"Downloaded data is not a valid zip file. Length: {len(logs_path_or_data)}"
         
-        # Extract the last num_lines from the log content
-        log_lines = log_content.splitlines()
-        log_lines = log_lines[-num_lines:] if len(log_lines) > num_lines else log_lines
-        
-        result = f"Last {len(log_lines)} lines of {log_file_name}:\n\n"
-        result += '\n'.join(log_lines)
-        
-        return result
     except Exception as e:
         return f"Error getting Plex logs: {str(e)}\n{traceback.format_exc()}"
-
-def extract_log_from_zip(zip_ref, log_file_name):
-    """Extract the requested log file content from a zip file object."""
-    # List all files in the zip
-    all_files = zip_ref.namelist()
-            
-    # Find the requested log file
-    log_file_path = None
-    for file in all_files:
-        if log_file_name.lower() in os.path.basename(file).lower():
-            log_file_path = file
-            break
-            
-            if not log_file_path:
-                raise ValueError(f"Could not find log file for type: {log_file_name}. Available files: {', '.join(all_files)}")
-           
-    # Read the log file content
-    with zip_ref.open(log_file_path) as f:
-        log_content = f.read().decode('utf-8', errors='ignore')
-    
-    return log_content
 
 @mcp.tool()
 async def server_get_info() -> str:

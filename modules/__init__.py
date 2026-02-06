@@ -7,9 +7,23 @@ from plexapi.myplex import MyPlexAccount # type: ignore
 # Add dotenv for .env file support
 try:
     from dotenv import load_dotenv # type: ignore
-    # Load environment variables from .env file
-    load_dotenv()
-    print("Successfully loaded environment variables from .env file")
+
+    # Config directory for the application
+    CONFIG_DIR = os.path.expanduser("~/.config/plex-mcp-server")
+    CONFIG_ENV_FILE = os.path.join(CONFIG_DIR, ".env")
+
+    # Load environment variables - check multiple locations
+    # Priority: 1) Current directory, 2) Config directory
+    loaded = load_dotenv()  # Current directory
+    if loaded:
+        print("Loaded environment variables from .env in current directory")
+
+    if os.path.exists(CONFIG_ENV_FILE):
+        load_dotenv(CONFIG_ENV_FILE)
+        print(f"Loaded environment variables from {CONFIG_ENV_FILE}")
+    elif not loaded:
+        print(f"No .env file found. Create one at {CONFIG_ENV_FILE} or in your current directory.")
+        print("Required variables: PLEX_URL, PLEX_TOKEN")
 except ImportError:
     print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
     print("Install with: pip install python-dotenv")
@@ -53,40 +67,13 @@ def connect_to_plex() -> PlexServer:
     
     for attempt in range(max_retries):
         try:
-            # Try connecting directly with a token
-            if plex_token:
-                server = PlexServer(plex_url, plex_token, timeout=CONNECTION_TIMEOUT)
-                last_connection_time = current_time
-                return server
+            # Connect directly with URL and token
+            if not plex_url or not plex_token:
+                raise ValueError("PLEX_URL and PLEX_TOKEN are required")
             
-            # If no direct connection, try with MyPlex account
-            username = os.environ.get("PLEX_USERNAME")
-            password = os.environ.get("PLEX_PASSWORD")
-            server_name = os.environ.get("PLEX_SERVER_NAME")
-            
-            if username and password and server_name:
-                account = MyPlexAccount(username, password)
-                # Use the plex_token if available to avoid resource.connect()
-                # which can be problematic
-                for resource in account.resources():
-                    if resource.name.lower() == server_name.lower() and resource.provides == 'server':
-                        if resource.connections:
-                            # Try each connection until one works
-                            for connection in resource.connections:
-                                try:
-                                    server = PlexServer(connection.uri, account.authenticationToken, timeout=CONNECTION_TIMEOUT)
-                                    last_connection_time = current_time
-                                    return server
-                                except:
-                                    continue
-                            
-                # If we get here, none of the connection attempts worked
-                # Fall back to resource.connect() as a last resort
-                server = account.resource(server_name).connect(timeout=CONNECTION_TIMEOUT)
-                last_connection_time = current_time
-                return server
-            
-            raise ValueError("Insufficient Plex credentials provided")
+            server = PlexServer(plex_url, plex_token, timeout=CONNECTION_TIMEOUT)
+            last_connection_time = current_time
+            return server
             
         except Exception as e:
             if attempt == max_retries - 1:  # Last attempt failed

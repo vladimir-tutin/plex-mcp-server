@@ -64,8 +64,7 @@ Add this configuration to your application's settings:
     ],
     "env": {
       "PLEX_URL":"http://localhost:32400",
-      "PLEX_TOKEN":"av3khi56h634v3",
-      "PLEX_USERNAME:"Administrator"
+      "PLEX_TOKEN":"av3khi56h634v3"
     }
   }
 }

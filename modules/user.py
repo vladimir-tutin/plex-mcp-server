@@ -11,7 +11,6 @@ try:
     from dotenv import load_dotenv # type: ignore
     # Load environment variables from .env file
     load_dotenv()
-    PLEX_USERNAME = os.environ.get("PLEX_USERNAME", None)
     print("Successfully loaded environment variables from .env file")
 except ImportError:
     print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
@@ -111,11 +110,73 @@ async def user_search_users(search_term: str = None) -> str:
         return json.dumps({"error": f"Error searching users: {str(e)}"})
 
 @mcp.tool()
-async def user_get_info(username: str = PLEX_USERNAME) -> str:
+async def user_list_all_users() -> str:
+    """List all users (owner, home users, and shared users) with their IDs and types.
+    
+    This is useful for getting the correct user IDs to filter watch history, especially for home users.
+    """
+    try:
+        plex = connect_to_plex()
+        account = plex.myPlexAccount()
+        
+        # Get all users from account
+        all_users = account.users()
+        
+        result = {
+            "owner": {
+                "id": account.id,
+                "username": account.username,
+                "email": account.email,
+                "title": account.title,
+                "uuid": account.uuid,
+                "type": "Owner",
+                "home": getattr(account, 'home', True),
+                "homeAdmin": getattr(account, 'homeAdmin', True)
+            },
+            "users": []
+        }
+        
+        # Process all users
+        for user in all_users:
+            user_data = {
+                "id": user.id,
+                "title": user.title if hasattr(user, 'title') else user.username,
+                "username": user.username if hasattr(user, 'username') else "",
+                "email": user.email if hasattr(user, 'email') else "",
+                "uuid": user.uuid if hasattr(user, 'uuid') else "",
+                "thumb": user.thumb if hasattr(user, 'thumb') else "",
+                # User type flags
+                "home": getattr(user, 'home', False),
+                "guest": getattr(user, 'guest', False),
+                "restricted": getattr(user, 'restricted', False),
+                "admin": getattr(user, 'admin', False),
+                "protected": getattr(user, 'protected', False)
+            }
+            
+            # Classify user type
+            if getattr(user, 'home', False):
+                if getattr(user, 'restricted', False):
+                    user_data["type"] = "Home User (Managed)"
+                else:
+                    user_data["type"] = "Home User"
+            else:
+                user_data["type"] = "Shared User"
+            
+            result["users"].append(user_data)
+        
+        result["total_users"] = len(result["users"])
+        
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Error listing users: {str(e)}"})
+
+
+@mcp.tool()
+async def user_get_info(username: str = None) -> str:
     """Get detailed information about a specific Plex user.
     
     Args:
-        username: Optional. Name of the user to get information for. Defaults to PLEX_USERNAME in .env
+        username: Optional. Name of the user to get information for. Defaults to the authenticated owner.
     """
     try:
         plex = connect_to_plex()
@@ -123,8 +184,8 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
         # Get account associated with the token
         account = plex.myPlexAccount()
         
-        # Check if the username is the owner
-        if username == account.username:
+        # Check if the username is the owner or if no username provided (default to owner)
+        if username is None or username.lower() == account.username.lower():
             result = {
                 "role": "Owner",
                 "username": account.username,
@@ -202,7 +263,7 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
         return json.dumps({"error": f"Error getting user info: {str(e)}"})
 
 @mcp.tool()
-async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
+async def user_get_on_deck(username: str = None) -> str:
     """Get on deck (in progress) media for a specific user.
     
     Args:
@@ -212,7 +273,9 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
         plex = connect_to_plex()
         
         # Try to switch to the user account to get their specific on-deck items
-        if username.lower() == plex.myPlexAccount().username.lower():
+        account = plex.myPlexAccount()
+        
+        if username is None or username.lower() == account.username.lower():
             # This is the main account, use server directly
             on_deck_items = plex.library.onDeck()
         else:
@@ -289,13 +352,14 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
         return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
     
 @mcp.tool()
-async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10, content_type: str = None) -> str:
+async def user_get_watch_history(username: str = None, limit: int = 10, content_type: str = None, user_id: int = None) -> str:
     """Get recent watch history for a specific user.
     
     Args:
-        username: Name of the user to get watch history for
+        username: Name of the user to get watch history for (ignored if user_id is provided)
         limit: Maximum number of recently watched items to show
         content_type: Optional filter for content type (movie, show, episode, etc)
+        user_id: Optional user ID to filter by (takes precedence over username). Use user_list_all_users to get IDs.
     """
     try:
         plex = connect_to_plex()
@@ -308,25 +372,55 @@ async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10,
         max_attempts = 4  # Maximum number of search expansions to prevent infinite loops
         attempt = 0
         
+        # Determine which account ID to use
+        target_account_id = None
+        target_username = username
+        is_owner = False
+        
+        if user_id is not None:
+            # User ID provided directly
+            target_account_id = user_id
+            # Check if this is the owner
+            if user_id == account.id:
+                is_owner = True
+                target_username = account.username
+                # IMPORTANT: Owner's history uses accountID=1, not their real account ID
+                target_account_id = 1
+            else:
+                # Try to find username for display purposes
+                for user in account.users():
+                    if user.id == user_id:
+                        target_username = user.title if hasattr(user, 'title') else user.username
+                        break
+        elif username and username.lower() != account.username.lower():
+            # Username provided (and not owner), need to look up the user
+            target_user = None
+            for user in account.users():
+                if user.username.lower() == username.lower() or (hasattr(user, 'title') and user.title.lower() == username.lower()):
+                    target_user = user
+                    break
+            
+            if not target_user:
+                return json.dumps({"error": f"User '{username}' not found."})
+            
+            target_account_id = target_user.id
+        else:
+            # Username is None (implying owner) OR username matches owner
+            is_owner = True
+            target_username = account.username
+            # IMPORTANT: Owner's history uses accountID=1, not their real account ID
+            target_account_id = 1
+        
         while len(filtered_items) < limit and attempt < max_attempts:
             attempt += 1
             
-            # For the main account owner
-            if username.lower() == account.username.lower():
+            # Get history based on account ID
+            if target_account_id is None:
+                # Should not happen, but fallback to unfiltered
                 history_items = plex.history(maxresults=current_search_limit)
             else:
-                # For a different user, find them in shared users
-                target_user = None
-                for user in account.users():
-                    if user.username.lower() == username.lower() or user.title.lower() == username.lower():
-                        target_user = user
-                        break
-                
-                if not target_user:
-                    return json.dumps({"error": f"User '{username}' not found."})
-                
-                # For a shared user, use accountID to filter history
-                history_items = plex.history(maxresults=current_search_limit, accountID=target_user.id)
+                # Specific user, filter by account ID
+                history_items = plex.history(maxresults=current_search_limit, accountID=target_account_id)
             
             # Filter by content type and deduplicate
             for item in history_items:
@@ -360,14 +454,15 @@ async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10,
         
         # If we couldn't find any matching items
         if not filtered_items:
-            message = f"No watch history found for user '{username}'"
+            message = f"No watch history found for user '{target_username}'"
             if content_type:
                 message += f" with content type '{content_type}'"
             return json.dumps({"message": message})
         
         # Format the results
         result = {
-            "username": username,
+            "username": target_username,
+            "user_id": target_account_id,
             "count": len(filtered_items),
             "requestedLimit": limit,
             "contentType": content_type,
