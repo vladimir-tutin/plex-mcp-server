@@ -20,20 +20,65 @@ Plex MCP Server creates a unified API layer on top of the Plex Media Server API,
 
 ## Installation
 
-1. Clone this repository
-2. Install the required dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Create a `.env` file based on the `.env.example`:
-   ```
-   cp .env.example .env
-   ```
-4. Add your Plex server URL and token to the `.env` file:
-   ```
-   PLEX_URL=http://your-plex-server:32400
-   PLEX_TOKEN=your-plex-token
-   ```
+### Option 1: Install from PyPI (Recommended)
+
+```bash
+pip install plex-mcp-server
+```
+
+Or with uv:
+```bash
+uv pip install plex-mcp-server
+```
+
+This installs the `plex-mcp-server` command globally.
+
+### Option 2: Run with uvx (No Installation Required)
+
+Run directly without installing:
+```bash
+uvx plex-mcp-server --transport stdio --plex-url http://your-server:32400 --plex-token your-token
+```
+
+### Option 3: Install from source
+
+```bash
+git clone https://github.com/vladimir-tutin/plex-mcp-server.git
+cd plex-mcp-server
+pip install .
+```
+
+## Configuration
+
+You can configure your Plex credentials in several ways:
+
+### Option A: Command Line Arguments (Recommended for Claude Desktop)
+
+Pass credentials directly when running:
+```bash
+plex-mcp-server --transport stdio --plex-url http://your-server:32400 --plex-token your-token
+```
+
+### Option B: Environment File (.env)
+
+Create a `.env` file in one of these locations:
+- Your current working directory
+- `~/.config/plex-mcp-server/.env` (recommended for installed version)
+
+```bash
+# Copy example and edit
+cp .env.example .env
+```
+
+Contents:
+```
+PLEX_URL=http://your-plex-server:32400
+PLEX_TOKEN=your-plex-token
+```
+
+### Option C: Environment Variables in Config
+
+Set credentials via the `env` block in your client configuration (see examples below).
 
 ## Usage
 
@@ -41,30 +86,85 @@ The server can be run in two transport modes: stdio (Standard Input/Output) or S
 
 ### Running with stdio Transport
 
-The stdio transport is ideal for direct integration with applications like Claude Desktop or Cursor. It accepts commands via standard input and outputs results to standard output in JSON format.
+The stdio transport is ideal for direct integration with applications like Claude Desktop or Cursor.
 
-Basic command line usage:
+**If installed via pip:**
 ```bash
-python3 -m plex_mcp
-```
-or
-```bash
-python3 plex_mcp_server.py --transport stdio
+plex-mcp-server --transport stdio
 ```
 
-#### Configuration Example for Claude Desktop/Cursor
-Add this configuration to your application's settings:
+**If running from source:**
+```bash
+python plex_mcp_server.py --transport stdio
+```
+
+#### Claude Desktop / Cursor Configuration
+
+**Option 1: Using uvx (Recommended - No Installation Required)**
+```json
+{
+  "plex": {
+    "command": "uvx",
+    "args": [
+      "plex-mcp-server",
+      "--transport",
+      "stdio",
+      "--plex-url",
+      "http://your-server:32400",
+      "--plex-token",
+      "your-plex-token"
+    ]
+  }
+}
+```
+
+**Option 2: Using CLI arguments (Requires pip install)**
+```json
+{
+  "plex": {
+    "command": "plex-mcp-server",
+    "args": [
+      "--transport",
+      "stdio",
+      "--plex-url",
+      "http://your-server:32400",
+      "--plex-token",
+      "your-plex-token"
+    ]
+  }
+}
+```
+
+**Option 3: Using environment variables**
+```json
+{
+  "plex": {
+    "command": "plex-mcp-server",
+    "args": [
+      "--transport",
+      "stdio"
+    ],
+    "env": {
+      "PLEX_URL": "http://your-server:32400",
+      "PLEX_TOKEN": "your-plex-token"
+    }
+  }
+}
+```
+
+**Option 4: Running from source**
 ```json
 {
   "plex": {
     "command": "python",
     "args": [
-      "C://Users//User//Documents//plex-mcp-server//plex_mcp_server.py",
-      "--transport=stdio"
+      "C:/path/to/plex-mcp-server/plex_mcp_server.py",
+      "--transport",
+      "stdio"
     ],
     "env": {
-      "PLEX_URL":"http://localhost:32400",
-      "PLEX_TOKEN":"av3khi56h634v3"
+      "PLEX_URL": "http://localhost:32400",
+      "PLEX_TOKEN": "your-plex-token"
     }
   }
 }
