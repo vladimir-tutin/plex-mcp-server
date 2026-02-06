@@ -4,10 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plex-mcp-server"
-version = "0.1.1"
-description = "MCP server for Plex Media Server"
+version = "1.0.0"
+description = "MCP server for Plex Media Server - Control your Plex server via Claude Desktop, Cursor, or any MCP-compatible client"
 readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.10"
+authors = [
+    {name = "Vladimir Tutin", email = "patrick.d.coy@gmail.com"}
+]
+keywords = ["plex", "mcp", "model-context-protocol", "claude", "automation", "media-server"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Home Automation",
+]
 dependencies = [
     "aiohttp==3.11.12",
     "mcp==1.26.0",
@@ -18,6 +36,11 @@ dependencies = [
     "uvicorn==0.40.0",
     "watchdog==6.0.0"
 ]
+
+[project.urls]
+Homepage = "https://github.com/vladimir-tutin/plex-mcp-server"
+Repository = "https://github.com/vladimir-tutin/plex-mcp-server"
+Issues = "https://github.com/vladimir-tutin/plex-mcp-server/issues"
 
 [project.scripts]
 plex-mcp-server = "plex_mcp_server:main"
