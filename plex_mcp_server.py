@@ -244,7 +244,7 @@ def create_starlette_app(mcp_server: Server, debug: bool = False):
             return JSONResponse({"error": "Could not determine authorization endpoint"}, status_code=502)
         
         async def handle_token_proxy(request: Request):
-            """Proxy /token requests to Authentik's token endpoint with CORS handled by middleware."""
+            """Proxy /token requests to Authentik's token endpoint."""
             import aiohttp
             
             # Get Authentik's token endpoint
