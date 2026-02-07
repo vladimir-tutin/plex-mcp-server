@@ -11,6 +11,21 @@ from mcp.server.sse import SseServerTransport # type: ignore
 from starlette.requests import Request # type: ignore
 from dotenv import load_dotenv # type: ignore
 
+def init_environment():
+    """Load environment variables from standard locations."""
+    # Priority: 1) Current directory, 2) Config directory (~/.config/plex-mcp-server/.env)
+    loaded = load_dotenv()  # Current directory
+    
+    config_dir = os.path.expanduser("~/.config/plex-mcp-server")
+    config_env_file = os.path.join(config_dir, ".env")
+    if os.path.exists(config_env_file):
+        if load_dotenv(config_env_file):
+            loaded = True
+    return loaded
+
+# Load environment before any other modules are imported
+env_loaded = init_environment()
+
 # Import the main mcp instance from modules
 import modules
 from modules import mcp, connect_to_plex
@@ -298,20 +313,7 @@ def create_starlette_app(mcp_server: Server, debug: bool = False):
 
 def main():
     """Main entry point for the Plex MCP Server."""
-    # Load environment variables - check multiple locations
-    # Priority: 1) Current directory, 2) Config directory (~/.config/plex-mcp-server/.env)
-    loaded = load_dotenv()  # Current directory
-    if loaded:
-        print("Loaded environment variables from .env in current directory")
-
-    config_dir = os.path.expanduser("~/.config/plex-mcp-server")
-    config_env_file = os.path.join(config_dir, ".env")
-    if os.path.exists(config_env_file):
-        if load_dotenv(config_env_file):
-            print(f"Loaded environment variables from {config_env_file}")
-            loaded = True
-            
-    if loaded:
+    if env_loaded:
         print("Successfully loaded environment variables from .env file")
     
     # Setup command line arguments
@@ -358,6 +360,9 @@ def main():
         os.environ['MCP_OAUTH_ISSUER'] = args.oauth_issuer
     if args.server_url:
         os.environ['MCP_SERVER_URL'] = args.server_url
+        
+    # Refresh OAuth configuration to pick up any CLI overrides or late-loaded environment variables
+    oauth_config.reload()
         
     # Initialize and run the server
     print(f"Starting Plex MCP Server with {args.transport} transport...")

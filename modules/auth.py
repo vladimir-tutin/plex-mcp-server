@@ -32,6 +32,11 @@ class OAuthConfig:
             self._server_url = os.getenv("MCP_SERVER_URL", "")
             self._jwks_cache_ttl = int(os.getenv("MCP_OAUTH_JWKS_CACHE_TTL", "3600"))
             self._loaded = True
+            
+    def reload(self):
+        """Explicitly reset configuration to force a reload from environment."""
+        self._loaded = False
+        self._load()
     
     @property
     def enabled(self):
@@ -96,8 +101,8 @@ def get_jwks_uri(issuer: str) -> str:
 class JWKSCache:
     """Cache for JWKS keys with TTL."""
     
-    def __init__(self, ttl_seconds: int = 3600):
-        self.ttl_seconds = ttl_seconds
+    def __init__(self, ttl_seconds: Optional[int] = None):
+        self._ttl_seconds = ttl_seconds
         self._cache: Optional[Dict[str, Any]] = None
         self._cache_time: Optional[datetime] = None
         
@@ -115,7 +120,8 @@ class JWKSCache:
         
         # Check if cache is valid
         if self._cache and self._cache_time:
-            if (now - self._cache_time) < timedelta(seconds=self.ttl_seconds):
+            ttl = self._ttl_seconds if self._ttl_seconds is not None else oauth_config.jwks_cache_ttl
+            if (now - self._cache_time) < timedelta(seconds=ttl):
                 return self._cache
         
         # Fetch fresh JWKS
@@ -129,8 +135,8 @@ class JWKSCache:
             raise ValueError(f"Failed to fetch JWKS: {str(e)}")
 
 
-# Global JWKS cache
-jwks_cache = JWKSCache(ttl_seconds=oauth_config.jwks_cache_ttl)
+# Global JWKS cache - uses dynamic TTL from oauth_config if not specified
+jwks_cache = JWKSCache()
 
 
 def validate_token(token: str) -> Dict[str, Any]:
