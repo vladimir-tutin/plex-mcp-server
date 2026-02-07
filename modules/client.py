@@ -12,12 +12,7 @@ from plexapi.exceptions import NotFound, Unauthorized
 
 def _find_client(plex, client_identifier: str) -> Tuple[Optional[Any], Optional[Any], str]:
     """Find a client by name or machineIdentifier.
-    
-    Searches in multiple places:
-    1. Direct plex.client() lookup
-    2. plex.clients() by partial name or machineIdentifier
-    3. Active sessions by player name or machineIdentifier
-    
+
     Args:
         plex: PlexServer instance
         client_identifier: Client name or machineIdentifier

@@ -7,15 +7,6 @@ import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 
-try:
-    from dotenv import load_dotenv # type: ignore
-    # Load environment variables from .env file
-    load_dotenv()
-    print("Successfully loaded environment variables from .env file")
-except ImportError:
-    print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
-    print("Install with: pip install python-dotenv")
-
 @mcp.tool()
 async def user_search_users(search_term: str = None) -> str:
     """Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided.

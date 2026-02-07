@@ -4,29 +4,7 @@ from mcp.server.fastmcp import FastMCP # type: ignore
 from plexapi.server import PlexServer # type: ignore
 from plexapi.myplex import MyPlexAccount # type: ignore
 
-# Add dotenv for .env file support
-try:
-    from dotenv import load_dotenv # type: ignore
-
-    # Config directory for the application
-    CONFIG_DIR = os.path.expanduser("~/.config/plex-mcp-server")
-    CONFIG_ENV_FILE = os.path.join(CONFIG_DIR, ".env")
-
-    # Load environment variables - check multiple locations
-    # Priority: 1) Current directory, 2) Config directory
-    loaded = load_dotenv()  # Current directory
-    if loaded:
-        print("Loaded environment variables from .env in current directory")
-
-    if os.path.exists(CONFIG_ENV_FILE):
-        load_dotenv(CONFIG_ENV_FILE)
-        print(f"Loaded environment variables from {CONFIG_ENV_FILE}")
-    elif not loaded:
-        print(f"No .env file found. Create one at {CONFIG_ENV_FILE} or in your current directory.")
-        print("Required variables: PLEX_URL, PLEX_TOKEN")
-except ImportError:
-    print("Warning: python-dotenv not installed. Environment variables won't be loaded from .env file.")
-    print("Install with: pip install python-dotenv")
+# Environment initialization is handled by plex_mcp_server.py
 
 # Initialize FastMCP server
 mcp = FastMCP("plex-server")
