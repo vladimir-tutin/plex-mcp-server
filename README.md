@@ -49,6 +49,14 @@ PLEX_URL=http://localhost:32400
 PLEX_TOKEN=your-authentication-token
 MCP_OAUTH_ENABLED=false
 ```
+or with OAuth Enabled
+```env
+PLEX_URL=http://localhost:32400
+PLEX_TOKEN=your-authentication-token
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
+MCP_SERVER_URL=https://plexmcp.example.com
+```
 
 ### 3. MCP Client Config
 Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
@@ -70,6 +78,15 @@ Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
   }
 }
 ```
+### 4. Claude Connector Installation
+
+Go to https://claude.ai/settings/connectors and add a new connector with the following settings:
+- Name: Plex MCP
+- URL: https://plexmcp.example.com/sse
+- Add OAuth Client ID and Client Secret if OAuth is enabled
+
+<img width="516" height="515" alt="image" src="https://github.com/user-attachments/assets/7949a127-51a7-4c60-a121-511ee4a1f00d" />
+
 
 ## Command Reference
 
@@ -178,12 +195,13 @@ Control playback and navigation on Plex clients.
 
 ## Remote Access & OAuth
 
-The Plex MCP Server can be integrated with remote platforms like **Claude.ai** via SSE and OAuth 2.1. This allows you to talk to your Plex server directly from the Claude interface.
+The Plex MCP Server can be integrated with remote platforms like **Claude.ai** via SSE and optional OAuth 2.1. This allows you to talk to your MCP server directly from the Claude interface from anywhere.
 
-### Enabling OAuth (Remote Mode)
+### Enabling OAuth
 1. Set `MCP_OAUTH_ENABLED=true` in your environment.
-2. Configure `MCP_OAUTH_ISSUER` (e.g., your Authentik/Keycloak provider URL).
+2. Configure `MCP_OAUTH_ISSUER` (e.g., your OAuth provider URL).
 3. Set `MCP_SERVER_URL` to your public-facing URL.
+4. Configure your client to use your OAuth provider Client ID and Secret
 
 ### Discovery Endpoints
 When OAuth is active, the following standard endpoints are exposed:
@@ -236,9 +254,5 @@ If an operation finds multiple items with the same name, it returns a list of sp
 ## Troubleshooting OAuth
 
 - **401 Unauthorized**: Ensure your `MCP_OAUTH_ISSUER` exactly matches the issuer URL in your identity provider (including trailing slashes).
-- **Public URL**: `MCP_SERVER_URL` must be reachable by the client (e.g., Claude.ai) and should use HTTPS.
+- **Public URL**: `MCP_SERVER_URL` must be reachable by the client (e.g., plexmcp.example.com) and should use HTTPS.
 - **Redirect URIs**: For Claude.ai, the redirect URI in your provider must be `https://claude.ai/api/mcp/auth_callback`.
-
-## License
-
-MIT License. See `LICENSE` for details.
