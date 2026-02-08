@@ -289,29 +289,25 @@ async def sessions_get_media_playback_history(media_title: str = None, library_n
             
             history_data = []
             
+            # Pre-fetch account and device info once to avoid N+1 network calls
+            try:
+                account = plex.myPlexAccount()
+                users = {u.id: u.title for u in account.users()}
+                users[account.id] = account.title
+            except Exception:
+                users = {}
+            
+            try:
+                devices = {d.clientIdentifier: d.name for d in plex.systemDevices()}
+            except Exception:
+                devices = {}
+            
             for item in history_items:
                 history_entry = {}
                 
                 # Get the username if available
                 account_id = getattr(item, 'accountID', None)
-                account_name = "Unknown User"
-                
-                # Try to get the account name from the accountID
-                if account_id:
-                    try:
-                        # This may not work unless we have admin privileges
-                        account = plex.myPlexAccount()
-                        if account.id == account_id:
-                            account_name = account.title
-                        else:
-                            for user in account.users():
-                                if user.id == account_id:
-                                    account_name = user.title
-                                    break
-                    except:
-                        # If we can't get the account name, just use the ID
-                        account_name = f"User ID: {account_id}"
-                
+                account_name = users.get(account_id, f"User ID: {account_id}") if account_id else "Unknown User"
                 history_entry["user"] = account_name
                 
                 # Get the timestamp when it was viewed
@@ -321,18 +317,7 @@ async def sessions_get_media_playback_history(media_title: str = None, library_n
                 
                 # Device information if available
                 device_id = getattr(item, 'deviceID', None)
-                device_name = "Unknown Device"
-                
-                # Try to resolve device name using systemDevice method
-                if device_id:
-                    try:
-                        device = plex.systemDevice(device_id)
-                        if device and hasattr(device, 'name'):
-                            device_name = device.name
-                    except Exception:
-                        # If we can't resolve the device name, just use the ID
-                        device_name = f"Device ID: {device_id}"
-                
+                device_name = devices.get(device_id, f"Device ID: {device_id}") if device_id else "Unknown Device"
                 history_entry["device"] = device_name
                 history_data.append(history_entry)
             
