@@ -341,6 +341,76 @@ async def user_get_on_deck(username: str = None) -> str:
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
+
+@mcp.tool()
+async def user_get_continue_watching(limit: int = 10) -> str:
+    """Get items the user has partially watched and can continue.
+    
+    Unlike on_deck which shows the next unwatched episode in a series,
+    continue_watching shows items that were started but not finished.
+    
+    Args:
+        limit: Maximum number of items to return (default 10)
+    
+    Returns:
+        List of partially-watched items with progress information.
+    """
+    try:
+        plex = connect_to_plex()
+        
+        items = plex.continueWatching()
+        
+        if not items:
+            return json.dumps({
+                "status": "success",
+                "message": "No items to continue watching.",
+                "count": 0,
+                "items": []
+            })
+        
+        # Limit results
+        items = items[:limit]
+        
+        result = {
+            "status": "success",
+            "count": len(items),
+            "items": []
+        }
+        
+        for item in items:
+            media_type = getattr(item, 'type', 'unknown')
+            title = getattr(item, 'title', 'Unknown Title')
+            
+            item_data = {
+                "type": media_type,
+                "title": title,
+                "ratingKey": getattr(item, 'ratingKey', None)
+            }
+            
+            if media_type == 'episode':
+                item_data["show"] = getattr(item, 'grandparentTitle', 'Unknown Show')
+                item_data["season"] = getattr(item, 'parentIndex', '?')
+                item_data["episode"] = getattr(item, 'index', '?')
+            elif media_type == 'movie':
+                item_data["year"] = getattr(item, 'year', '')
+            
+            # Add progress information
+            if hasattr(item, 'viewOffset') and hasattr(item, 'duration') and item.duration:
+                progress_pct = (item.viewOffset / item.duration) * 100
+                remaining_ms = item.duration - item.viewOffset
+                remaining_mins = remaining_ms // 60000
+                
+                item_data["progress"] = round(progress_pct, 1)
+                item_data["remaining_minutes"] = remaining_mins
+            
+            result["items"].append(item_data)
+        
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error getting continue watching: {str(e)}"
+        })
     
 @mcp.tool()
 async def user_get_watch_history(username: str = None, limit: int = 10, content_type: str = None, user_id: int = None) -> str:

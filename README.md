@@ -152,6 +152,7 @@ Information about the server owner and shared users.
 | `user_list_all_users` | List all users with types and IDs. | None |
 | `user_get_info` | Detailed info for a specific user. | `username` |
 | `user_get_on_deck` | Get "On Deck" items for a user. | `username` |
+| `user_get_continue_watching` | Get partially watched items to resume. | `limit: int` |
 | `user_get_watch_history` | Retrieve personal watch history. | `username`, `limit`, `content_type`, `user_id` |
 | `user_get_statistics` | Watch progress and usage statistics. | `time_period`, `username` |
 

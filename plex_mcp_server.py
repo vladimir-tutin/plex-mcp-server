@@ -54,6 +54,7 @@ from modules.user import (
     user_list_all_users,
     user_get_info,
     user_get_on_deck,
+    user_get_continue_watching,
     user_get_watch_history,
     user_get_statistics
 )
