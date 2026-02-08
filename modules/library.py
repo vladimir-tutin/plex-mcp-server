@@ -6,6 +6,7 @@ from plexapi.exceptions import NotFound # type: ignore
 from modules import mcp, connect_to_plex
 from urllib.parse import urljoin
 import time
+from typing import Optional, Union, List, Dict
 
 def get_plex_headers(plex):
     """Get standard Plex headers for HTTP requests"""
@@ -17,6 +18,14 @@ def get_plex_headers(plex):
 async def async_get_json(session, url, headers):
     """Helper function to make async HTTP requests"""
     async with session.get(url, headers=headers) as response:
+        if response.status != 200:
+            status = response.status
+            try:
+                error_body = await response.text()
+                error_msg = error_body[:200]
+            except:
+                error_msg = "Could not read error body"
+            raise Exception(f"Plex API error {status}: {error_msg}")
         return await response.json()
 
 @mcp.tool()
@@ -288,7 +297,7 @@ async def library_get_stats(library_name: str) -> str:
         return json.dumps({"error": f"Error getting library stats: {str(e)}"})
 
 @mcp.tool()
-async def library_refresh(library_name: str = None) -> str:
+async def library_refresh(library_name: Optional[str] = None) -> str:
     """Refresh a specific library or all libraries.
     
     Args:
@@ -322,7 +331,7 @@ async def library_refresh(library_name: str = None) -> str:
         return json.dumps({"error": f"Error refreshing library: {str(e)}"})
 
 @mcp.tool()
-async def library_scan(library_name: str, path: str = None) -> str:
+async def library_scan(library_name: str, path: Optional[str] = None) -> str:
     """Scan a specific library or part of a library.
     
     Args:
@@ -428,7 +437,7 @@ async def library_get_details(library_name: str) -> str:
         return json.dumps({"error": f"Error getting library details: {str(e)}"})
 
 @mcp.tool()
-async def library_get_recently_added(count: int = 50, library_name: str = None) -> str:
+async def library_get_recently_added(count: int = 50, library_name: Optional[str] = None) -> str:
     """Get recently added media across all libraries or in a specific library.
     
     Args:
@@ -556,14 +565,44 @@ async def library_get_recently_added(count: int = 50, library_name: str = None) 
         return json.dumps({"error": f"Error getting recently added items: {str(e)}"})
 
 @mcp.tool()
-async def library_get_contents(library_name: str) -> str:
-    """Get the full contents of a specific library.
+async def library_get_contents(
+    library_name: str, 
+    unwatched: bool = False, 
+    watched: bool = False,
+    sort: Optional[str] = None, 
+    offset: int = 0, 
+    limit: int = 50,
+    genre: Optional[str] = None,
+    year: Optional[Union[int, str]] = None,
+    content_rating: Optional[str] = None,
+    director: Optional[str] = None,
+    actor: Optional[str] = None,
+    writer: Optional[str] = None,
+    resolution: Optional[str] = None,
+    network: Optional[str] = None,
+    studio: Optional[str] = None
+) -> str:
+    """Get the filtered and paginated contents of a specific library.
     
     Args:
         library_name: Name of the library to get contents from
+        unwatched: If True, only return unwatched items
+        watched: If True, only return watched items
+        sort: Sort order (e.g., 'addedAt:desc', 'title:asc')
+        offset: Number of items to skip (default: 0)
+        limit: Maximum number of items to return (default: 50)
+        genre: Filter by genre tag
+        year: Filter by release year
+        content_rating: Filter by content rating (e.g., 'PG-13')
+        director: Filter by director tag
+        actor: Filter by actor tag
+        writer: Filter by writer tag
+        resolution: Filter by resolution (e.g., '4k', '1080')
+        network: Filter by network tag (primarily for TV)
+        studio: Filter by studio tag
     
     Returns:
-        String listing all items in the library
+        JSON string listing items in the library with pagination metadata
     """
     try:
         plex = connect_to_plex()
@@ -587,16 +626,59 @@ async def library_get_contents(library_name: str) -> str:
             section_id = target_section['key']
             library_type = target_section['type']
             
-            # Get all items
-            all_items_url = urljoin(base_url, f'library/sections/{section_id}/all')
-            all_data = await async_get_json(session, all_items_url, headers)
+            from urllib.parse import urlencode
+            
+            # Build query parameters for filtering and pagination
+            # Plex supports 'start' and 'size' as query parameters for library sections
+            query_params = {
+                'start': offset,
+                'size': limit
+            }
+            if unwatched:
+                query_params['unwatched'] = '1'
+            elif watched:
+                query_params['unwatched'] = '0'
+            if sort:
+                query_params['sort'] = sort
+            
+            # Add advanced filters
+            if genre:
+                query_params['genre'] = genre
+            if year:
+                query_params['year'] = str(year)
+            if content_rating:
+                query_params['contentRating'] = content_rating
+            if director:
+                query_params['director'] = director
+            if actor:
+                query_params['actor'] = actor
+            if writer:
+                query_params['writer'] = writer
+            if resolution:
+                query_params['resolution'] = resolution
+            if network:
+                query_params['network'] = network
+            if studio:
+                query_params['studio'] = studio
+            
+            # Also set pagination headers which Plex often expects/supports
+            request_headers = headers.copy()
+            request_headers['X-Plex-Container-Start'] = str(offset)
+            request_headers['X-Plex-Container-Size'] = str(limit)
+            
+            # Get items with filters and pagination
+            all_items_url = urljoin(base_url, f'library/sections/{section_id}/all?{urlencode(query_params)}')
+            all_data = await async_get_json(session, all_items_url, request_headers)
             all_data = all_data['MediaContainer']
             
             # Prepare the result
             result = {
                 "name": target_section['title'],
                 "type": library_type,
-                "totalItems": all_data.get('size', 0),
+                "totalItems": all_data.get('totalSize', all_data.get('size', 0)),
+                "offset": offset,
+                "limit": limit,
+                "size": all_data.get('size', 0),
                 "items": []
             }
             
