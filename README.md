@@ -184,10 +184,9 @@ Control playback and navigation on Plex clients.
 
 | Command | Description | Parameters |
 |---------|-------------|------------|
-| `client_list` | List all available playback clients. | None |
+| `client_list` | List all available playback clients. | `include_details: bool`, `active_only: bool` |
 | `client_get_details` | Detailed info for a client. | `client_name`, `client_id` |
 | `client_get_timelines` | Current playback state/trackers. | `client_name`, `client_id` |
-| `client_get_active` | Find currently reachable/active clients. | None |
 | `client_start_playback` | Start playing a media item on a client. | `client_name`, `media_title`, `client_id`, `media_id` |
 | `client_control_playback` | Play, Pause, Stop, Seek, Skip. | `client_name`, `action`, `offset`, `client_id` |
 | `client_navigate` | Send remote control navigation commands. | `client_name`, `command`, `client_id` |

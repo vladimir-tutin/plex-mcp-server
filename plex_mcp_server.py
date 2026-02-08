@@ -107,7 +107,6 @@ from modules.client import (
     client_list, 
     client_get_details, 
     client_get_timelines,
-    client_get_active, 
     client_start_playback, 
     client_control_playback,
     client_navigate, 
