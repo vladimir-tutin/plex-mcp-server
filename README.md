@@ -188,7 +188,7 @@ Control playback and navigation on Plex clients.
 | `client_list` | List all available playback clients. | `include_details: bool`, `active_only: bool` |
 | `client_get_details` | Detailed info for a client. | `client_name`, `client_id` |
 | `client_get_timelines` | Current playback state/trackers. | `client_name`, `client_id` |
-| `client_start_playback` | Start playing a media item on a client. | `client_name`, `media_title`, `client_id`, `media_id` |
+| `client_start_playback` | Start playing a media item on a client. | `media_title`, `client_name`, `rating_key`, `offset`, `library_name`, `use_external_player` |
 | `client_control_playback` | Play, Pause, Stop, Seek, Skip. | `client_name`, `action`, `offset`, `client_id` |
 | `client_navigate` | Send remote control navigation commands. | `client_name`, `command`, `client_id` |
 | `client_set_streams` | Changes audio or subtitle tracks. | `client_name`, `audio_stream_id`, `subtitle_stream_id`, `client_id` |

@@ -4,6 +4,7 @@ Provides tools to connect to clients and control media playback.
 """
 import json
 import time
+import asyncio
 from typing import List, Dict, Optional, Union, Any, Tuple
 
 from modules import mcp, connect_to_plex
@@ -423,76 +424,94 @@ async def client_get_timelines(client_name: str) -> str:
         })
 
 @mcp.tool()
-async def client_start_playback(media_title: str, client_name: str = None, 
+async def client_start_playback(media_title: str = None, client_name: str = None, 
                         offset: int = 0, library_name: str = None, 
-                        use_external_player: bool = False) -> str:
+                        use_external_player: bool = False,
+                        rating_key: int = None) -> str:
     """Start playback of media on a specified client.
     
     Args:
-        media_title: Title of the media to play
+        media_title: Title of the media to play (optional if rating_key is provided)
         client_name: Optional name of the client to play on (will prompt if not provided)
         offset: Optional time offset in milliseconds to start from
         library_name: Optional name of the library to search in
         use_external_player: Whether to use the client's external player
+        rating_key: Optional specific rating key (ID) of the media to play
     """
     try:
         plex = connect_to_plex()
         
         # First, find the media item
-        results = []
-        if library_name:
+        media = None
+        if rating_key:
             try:
-                library = plex.library.section(library_name)
-                results = library.search(title=media_title)
-            except Exception:
+                media = plex.fetchItem(rating_key)
+            except Exception as e:
                 return json.dumps({
                     "status": "error",
-                    "message": f"Library '{library_name}' not found"
+                    "message": f"Media not found for rating key {rating_key}: {str(e)}"
                 })
+        elif media_title:
+            results = []
+            if library_name:
+                try:
+                    library = plex.library.section(library_name)
+                    results = library.search(title=media_title)
+                except Exception:
+                    return json.dumps({
+                        "status": "error",
+                        "message": f"Library '{library_name}' not found"
+                    })
+            else:
+                results = plex.search(media_title)
+            
+            if not results:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"No media found matching '{media_title}'"
+                })
+            
+            if len(results) > 1:
+                # If multiple results, provide information about them
+                media_list = []
+                for i, m in enumerate(results[:10], 1):  # Limit to first 10 to avoid overwhelming
+                    m_media_type = getattr(m, 'type', 'unknown')
+                    m_title = getattr(m, 'title', 'Unknown')
+                    m_year = getattr(m, 'year', '')
+                    
+                    media_info = {
+                        "index": i,
+                        "title": m_title,
+                        "type": m_media_type,
+                        "rating_key": getattr(m, 'ratingKey', None)
+                    }
+                    
+                    if m_year:
+                        media_info["year"] = m_year
+                    
+                    if m_media_type == 'episode':
+                        m_show = getattr(m, 'grandparentTitle', 'Unknown Show')
+                        m_season = getattr(m, 'parentIndex', '?')
+                        m_episode = getattr(m, 'index', '?')
+                        media_info["show"] = m_show
+                        media_info["season"] = m_season
+                        media_info["episode"] = m_episode
+                    
+                    media_list.append(media_info)
+                
+                return json.dumps({
+                    "status": "multiple_results",
+                    "message": f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title, or use rating_key.",
+                    "count": len(results),
+                    "results": media_list
+                }, indent=2)
+            
+            media = results[0]
         else:
-            results = plex.search(media_title)
-        
-        if not results:
             return json.dumps({
                 "status": "error",
-                "message": f"No media found matching '{media_title}'"
+                "message": "Either media_title or rating_key must be provided."
             })
-        
-        if len(results) > 1:
-            # If multiple results, provide information about them
-            media_list = []
-            for i, media in enumerate(results[:10], 1):  # Limit to first 10 to avoid overwhelming
-                media_type = getattr(media, 'type', 'unknown')
-                title = getattr(media, 'title', 'Unknown')
-                year = getattr(media, 'year', '')
-                
-                media_info = {
-                    "index": i,
-                    "title": title,
-                    "type": media_type,
-                }
-                
-                if year:
-                    media_info["year"] = year
-                
-                if media_type == 'episode':
-                    show = getattr(media, 'grandparentTitle', 'Unknown Show')
-                    season = getattr(media, 'parentIndex', '?')
-                    episode = getattr(media, 'index', '?')
-                    media_info["show"] = show
-                    media_info["season"] = season
-                    media_info["episode"] = episode
-                
-                media_list.append(media_info)
-            
-            return json.dumps({
-                "status": "multiple_results",
-                "message": f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title.",
-                "count": len(results),
-                "results": media_list
-            }, indent=2)
-        
-        media = results[0]
         
         # If no client name specified, list available clients
         if not client_name:
@@ -549,6 +568,15 @@ async def client_start_playback(media_title: str, client_name: str = None,
                 "status": "error",
                 "message": f"No client found matching '{client_name}'. Use client_list to see available clients."
             })
+        
+        # STOP current playback if session exists to ensure a clean transition
+        if session:
+            try:
+                client.stop()
+                await asyncio.sleep(1)
+            except Exception:
+                # Continue if stop fails (client might already be idle but session still active)
+                pass
         
         # Start playback
         media_type = getattr(media, 'type', 'unknown')
