@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/vladimir-tutin-plex-mcp-server-badge.png)](https://mseep.ai/app/vladimir-tutin-plex-mcp-server)
+
 # Plex MCP Server
 
 A powerful Model-Context-Protocol (MCP) server for interacting with Plex Media Server. It provides a standardized JSON-based interface for automation, AI agents (like Claude), and custom integrations.
