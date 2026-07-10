@@ -7,6 +7,5 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
-    environment:
-      - PLEX_URL=${PLEX_URL}
-      - PLEX_TOKEN=${PLEX_TOKEN}
+    env_file:
+      - .env
