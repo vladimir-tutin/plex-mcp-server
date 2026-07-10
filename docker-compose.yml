@@ -1,0 +1,12 @@
+services:
+  plex-mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plex-mcp-server
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PLEX_URL=${PLEX_URL}
+      - PLEX_TOKEN=${PLEX_TOKEN}
