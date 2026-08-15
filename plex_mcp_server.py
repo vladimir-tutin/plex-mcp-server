@@ -97,6 +97,7 @@ from modules.collection import (
 from modules.media import (
     media_search,
     media_get_details,
+    media_set_watched_status,
     media_edit_metadata,
     media_delete,
     media_get_artwork,

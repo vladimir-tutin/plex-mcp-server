@@ -110,6 +110,7 @@ Tools for searching, inspecting, and editing specific media items.
 |---------|-------------|------------|
 | `media_search` | Search for media across all libraries. | `query`, `library_name`, `content_type` |
 | `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id` |
+| `media_set_watched_status` | Mark an item watched or unwatched for the user represented by `PLEX_TOKEN`. | `media_id`, `watched` |
 | `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `library_name`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags` |
 | `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id` |
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `library_name`, `art_type: str` |

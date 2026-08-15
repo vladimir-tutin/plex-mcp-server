@@ -293,6 +293,70 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
     except Exception as e:
         return json.dumps({"error": f"Error getting media details: {str(e)}"}, indent=4)
 
+
+@mcp.tool()
+async def media_set_watched_status(media_id: int, watched: bool) -> str:
+    """Mark a Plex media item as watched or unwatched for the configured user.
+
+    Args:
+        media_id: Plex rating key returned by media_search or media_get_details
+        watched: True to mark the item watched, False to mark it unwatched
+    """
+    try:
+        plex = connect_to_plex()
+        media = plex.fetchItem(media_id)
+
+        if media is None:
+            return json.dumps({
+                "status": "error",
+                "message": f"Media with ID {media_id} was not found"
+            })
+
+        required_method = "markPlayed" if watched else "markUnplayed"
+        if not hasattr(media, "isPlayed") or not callable(getattr(media, required_method, None)):
+            return json.dumps({
+                "status": "error",
+                "message": f"Media with ID {media_id} does not support watched status",
+                "media_id": getattr(media, "ratingKey", media_id),
+                "title": getattr(media, "title", "Unknown"),
+                "type": getattr(media, "type", "unknown")
+            }, indent=2)
+
+        previous_watched = bool(media.isPlayed)
+        changed = previous_watched != watched
+
+        if changed:
+            getattr(media, required_method)()
+
+        refreshed_media = plex.fetchItem(media_id)
+        current_watched = bool(refreshed_media.isPlayed)
+
+        if current_watched != watched:
+            return json.dumps({
+                "status": "error",
+                "message": "Plex did not persist the requested watched status",
+                "media_id": getattr(refreshed_media, "ratingKey", media_id),
+                "previous_watched": previous_watched,
+                "requested_watched": watched,
+                "watched": current_watched
+            }, indent=2)
+
+        return json.dumps({
+            "status": "success",
+            "media_id": getattr(refreshed_media, "ratingKey", media_id),
+            "title": getattr(refreshed_media, "title", "Unknown"),
+            "type": getattr(refreshed_media, "type", "unknown"),
+            "previous_watched": previous_watched,
+            "watched": current_watched,
+            "changed": changed,
+            "view_count": getattr(refreshed_media, "viewCount", 0) or 0
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error setting watched status for media ID {media_id}: {str(e)}"
+        }, indent=2)
+
 # Helper function to extract media details
 def get_media_details(media):
     """Extract details from a media object and return as a dictionary."""
@@ -319,6 +383,8 @@ def get_media_details(media):
         'duration': format_duration(getattr(media, 'duration', None)) if hasattr(media, 'duration') and media.duration else None,
         'studio': getattr(media, 'studio', None),
         'year': getattr(media, 'year', None),
+        'watched': bool(getattr(media, 'isPlayed', False)),
+        'view_count': getattr(media, 'viewCount', 0) or 0,
     }
     
     # Add type-specific fields
@@ -487,7 +553,6 @@ def get_media_details(media):
         details['disc_number'] = getattr(media, 'parentIndex', None)
         details['year'] = getattr(media, 'year', None)
         details['rating'] = getattr(media, 'userRating', None) if hasattr(media, 'userRating') else getattr(media, 'rating', None)
-        details['view_count'] = getattr(media, 'viewCount', 0)
         details['skip_count'] = getattr(media, 'skipCount', 0)
         
         # Remove fields not needed for tracks
