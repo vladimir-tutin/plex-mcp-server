@@ -319,11 +319,13 @@ def main():
     
     # Setup command line arguments
     parser = argparse.ArgumentParser(description='Run Plex MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='sse',
-                        help='Transport method to use (stdio or sse)')
-    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (for SSE)')
-    parser.add_argument('--port', type=int, default=3001, help='Port to listen on (for SSE)')
+    parser.add_argument('--transport', choices=['stdio', 'sse', 'streamable-http'], default='sse',
+                        help='Transport method to use (stdio, sse, or streamable-http)')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (for HTTP transports)')
+    parser.add_argument('--port', type=int, default=3001, help='Port to listen on (for HTTP transports)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
+    parser.add_argument('--disable-dns-rebinding-protection', action='store_true',
+                        help='Disable DNS rebinding protection for trusted internal networks')
     
     # Plex configuration arguments
     parser.add_argument('--plex-url', default=os.environ.get('PLEX_URL'), 
@@ -376,6 +378,14 @@ def main():
     if args.transport == 'stdio':
         # Run with stdio transport (original method)
         mcp.run(transport='stdio')
+    elif args.transport == 'streamable-http':
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.settings.debug = args.debug
+        if args.disable_dns_rebinding_protection:
+            mcp.settings.transport_security.enable_dns_rebinding_protection = False
+        print(f"Starting Streamable HTTP server on http://{args.host}:{args.port}/mcp")
+        mcp.run(transport='streamable-http')
     else:
         # Run with SSE transport
         mcp_server = mcp._mcp_server  # Access the underlying MCP server

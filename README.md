@@ -19,6 +19,15 @@ Run directly without installation:
 uvx plex-mcp-server --transport stdio --plex-url http://your-server:32400 --plex-token your-token
 ```
 
+Run as a native Streamable HTTP server:
+
+```bash
+uvx plex-mcp-server --transport streamable-http --host 0.0.0.0 --port 8000
+```
+
+For a trusted internal network such as a Kubernetes ClusterIP service, append
+`--disable-dns-rebinding-protection` so service-name Host headers are accepted.
+
 ### Option 2: Install via pip
 
 ```bash
