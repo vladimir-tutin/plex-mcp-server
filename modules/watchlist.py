@@ -93,8 +93,14 @@ async def _request(method, path, params=None):
 
 
 def _item(row):
-    return {"guid": row.get("guid"), "title": row.get("title"),
+    item = {"guid": row.get("guid"), "title": row.get("title"),
             "type": row.get("type"), "year": row.get("year")}
+    for source, field in (("originallyAvailableAt", "release_date"),
+                          ("duration", "duration_ms"),
+                          ("contentRating", "content_rating")):
+        if row.get(source) is not None:
+            item[field] = row[source]
+    return item
 
 
 def _external_ids(row):
@@ -212,6 +218,9 @@ def _error(exc):
 @_with_home_profile
 async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = None, pin: str = None, username: str = None, include_state: bool = True) -> str:
     """List the PLEX_TOKEN account's Watchlist, including titles outside the library.
+
+    Includes Plex's release_date, duration_ms and content_rating when supplied.
+    The release date does not distinguish theatrical, physical or streaming releases.
 
     Args:
         include_state: Include matching local library items and their watched/progress state (default True).

@@ -471,6 +471,9 @@ access returns an error. Movie, episode and track details include `watched`,
 ### Watchlist Module
 
 Manage the Plex account Watchlist, including movies and shows outside your library.
+Listings and search results include `release_date`, `duration_ms` (runtime in
+milliseconds), and `content_rating` when Plex supplies them, without extra lookups.
+The release date does not distinguish theatrical, physical, or streaming releases.
 
 By default, listing also looks up the selected user's library state. Movies include saved
 progress and watched status; shows include watched and total episode counts. Matching
