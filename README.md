@@ -451,6 +451,26 @@ Tools for searching, inspecting, and editing specific media items.
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `library_name`, `poster_path`, `poster_url`, `background_path`, `background_url` |
 | `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `library_name`, `art_type` |
 
+### Watchlist Module
+
+Manage the Plex account Watchlist, including movies and shows outside your library.
+
+| Command | Description | Parameters |
+|---|---|---|
+| `watchlist_list` | List Watchlist titles. | `offset`, `limit` (1–100) |
+| `watchlist_search` | Search Plex Discover for titles to add. | `query`, `content_type` (movie/show), `limit` (1–100) |
+| `watchlist_add` | Add a movie or show. | `guid` |
+| `watchlist_remove` | Remove a movie or show. | `guid` |
+
+Search first, then pass the chosen result's `guid` to `watchlist_add`. To remove
+an entry, use its GUID from `watchlist_list`. These `plex://movie/...` or
+`plex://show/...` identifiers are cloud IDs, not local `media_id`/`ratingKey` values.
+List results default to 50 items; increase `offset` for the next page.
+
+All four tools use the account represented by `PLEX_TOKEN`, which must support
+plex.tv account access. The OAuth login does not select a different Plex account.
+Add/remove operations confirm membership and leave media files and watched status unchanged.
+
 ### Playlist Module
 Manage your personal and shared playlists.
 

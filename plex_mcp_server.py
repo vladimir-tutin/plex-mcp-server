@@ -1,4 +1,5 @@
 import argparse
+import sys
 import os
 import json
 import uvicorn # type: ignore
@@ -107,6 +108,8 @@ from modules.media import (
     media_set_artwork,
     media_list_available_artwork  
 )  
+from modules.watchlist import watchlist_list, watchlist_search, watchlist_add, watchlist_remove
+
 # Client module functions
 from modules.client import (
     client_list, 
@@ -413,7 +416,7 @@ def create_streamable_http_app(mcp_server: Server, debug: bool = False, path: st
 def main():
     """Main entry point for the Plex MCP Server."""
     if env_loaded:
-        print("Successfully loaded environment variables from .env file")
+        print("Successfully loaded environment variables from .env file", file=sys.stderr)
     
     # Setup command line arguments
     parser = argparse.ArgumentParser(description='Run Plex MCP Server')
@@ -468,12 +471,11 @@ def main():
     oauth_config.reload()
         
     # Initialize and run the server
-    print(f"Starting Plex MCP Server with {args.transport} transport...")
+    print(f"Starting Plex MCP Server with {args.transport} transport...", file=sys.stderr)
     
     # Configuration status
-    masked_token = f"{args.plex_token[:4]}...{args.plex_token[-4:]}" if args.plex_token and len(args.plex_token) > 8 else "Not set"
     if not args.plex_url or not args.plex_token:
-        print("Warning: Missing Plex configuration. Set PLEX_URL/PLEX_TOKEN via args or .env")
+        print("Warning: Missing Plex configuration. Set PLEX_URL/PLEX_TOKEN via args or .env", file=sys.stderr)
     
     if args.transport == 'stdio':
         # Run with stdio transport (original method)
@@ -481,15 +483,15 @@ def main():
     elif args.transport == 'streamable-http':
         mcp_server = mcp._mcp_server  # Access the underlying MCP server
         starlette_app = create_streamable_http_app(mcp_server, debug=args.debug)
-        print(f"Starting Streamable HTTP server on http://{args.host}:{args.port}")
-        print("Access the MCP endpoint at /mcp")
+        print(f"Starting Streamable HTTP server on http://{args.host}:{args.port}", file=sys.stderr)
+        print("Access the MCP endpoint at /mcp", file=sys.stderr)
         uvicorn.run(starlette_app, host=args.host, port=args.port)
     else:
         # Run with SSE transport
         mcp_server = mcp._mcp_server  # Access the underlying MCP server
         starlette_app = create_starlette_app(mcp_server, debug=args.debug)
-        print(f"Starting SSE server on http://{args.host}:{args.port}")
-        print("Access the SSE endpoint at /sse")
+        print(f"Starting SSE server on http://{args.host}:{args.port}", file=sys.stderr)
+        print("Access the SSE endpoint at /sse", file=sys.stderr)
         uvicorn.run(starlette_app, host=args.host, port=args.port)
 
 if __name__ == "__main__":
