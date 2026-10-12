@@ -4,6 +4,7 @@ import aiohttp
 import asyncio
 from plexapi.exceptions import NotFound # type: ignore
 from modules import mcp, connect_to_plex
+from modules.profiles import server_for_user
 from urllib.parse import urljoin
 import time
 from typing import Optional, Union, List, Dict
@@ -580,7 +581,8 @@ async def library_get_contents(
     writer: Optional[str] = None,
     resolution: Optional[str] = None,
     network: Optional[str] = None,
-    studio: Optional[str] = None
+    studio: Optional[str] = None,
+    username: Optional[str] = None
 ) -> str:
     """Get the filtered and paginated contents of a specific library.
     
@@ -589,7 +591,7 @@ async def library_get_contents(
         unwatched: Use Plex's unwatched filter (shows may still have watched episodes).
         watched: Only return played movies or shows with at least one played episode.
             Partially watched shows are included; inspect watchStatus and watchedEpisodeCount.
-            Cannot be combined with unwatched. Watch state belongs to the Plex token's user.
+            Cannot be combined with unwatched. Watch state belongs to the selected user.
         sort: Sort order (e.g., 'addedAt:desc', 'title:asc')
         offset: Number of items to skip (default: 0)
         limit: Maximum number of items to return (default: 50)
@@ -602,6 +604,7 @@ async def library_get_contents(
         resolution: Filter by resolution (e.g., '4k', '1080')
         network: Filter by network tag (primarily for TV)
         studio: Filter by studio tag
+        username: Optional Plex username or profile title; omit for the configured account. Failed access returns an error.
     
     Returns:
         JSON string listing items with media_id and pagination metadata. For shows,
@@ -615,7 +618,7 @@ async def library_get_contents(
         return json.dumps({"error": "watched and unwatched cannot both be true"})
 
     try:
-        plex = connect_to_plex()
+        plex = await asyncio.to_thread(lambda: server_for_user(connect_to_plex(), username=username))
         base_url = plex._baseurl
         headers = get_plex_headers(plex)
         

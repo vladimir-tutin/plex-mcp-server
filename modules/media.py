@@ -1,4 +1,6 @@
 from modules import mcp, connect_to_plex
+from modules.profiles import server_for_user
+import asyncio
 from typing import List
 from plexapi.exceptions import NotFound # type: ignore
 import base64
@@ -204,16 +206,20 @@ async def media_search(query: str, content_type: str = None) -> str:
         })
 
 @mcp.tool()
-async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None) -> str:
+async def media_get_details(media_title: str = None, media_id: int = None, library_name: str = None, username: str = None) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
     
     Args:
         media_title: Title of the media to get details for (optional if media_id is provided)
         media_id: Plex media ID/rating key to directly fetch the item (optional if media_title is provided)
         library_name: Optional library name to limit search to when using media_title
+        username: Optional Plex username or profile title; omit for the configured account. Failed access returns an error.
+
+    Movie, episode and track results include watched, view_count, playback_offset_ms,
+    in_progress and progress_percent for the selected user. Saved progress is not live playback.
     """
     try:
-        plex = connect_to_plex()
+        plex = await asyncio.to_thread(lambda: server_for_user(connect_to_plex(), username=username))
         
         # Validate that at least one identifier is provided
         if media_id is None and not media_title:
@@ -321,6 +327,18 @@ def get_media_details(media):
         'year': getattr(media, 'year', None),
     }
     
+    if media.type in ("movie", "episode", "track"):
+        view_count = getattr(media, "viewCount", 0) or 0
+        offset = max(0, getattr(media, "viewOffset", 0) or 0)
+        duration = getattr(media, "duration", 0) or 0
+        details.update({
+            "view_count": view_count,
+            "watched": view_count > 0,
+            "playback_offset_ms": offset,
+            "in_progress": offset > 0,
+            "progress_percent": round(min(100, 100 * offset / duration), 1) if duration > 0 else None,
+        })
+
     # Add type-specific fields
     if media.type == 'movie':
         details['summary'] = getattr(media, 'summary', None) if hasattr(media, 'summary') else None

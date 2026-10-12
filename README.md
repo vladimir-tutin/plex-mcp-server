@@ -401,7 +401,7 @@ Tools for exploring and managing your Plex libraries.
 | `library_scan` | Scans a library for new files. | `library_name` |
 | `library_get_details` | Gets detailed information about a library. | `library_name` |
 | `library_get_recently_added` | Lists recently added items in a library. | `library_name`, `limit: int` |
-| `library_get_contents` | Lists current library items with media IDs, filters, and pagination. | `library_name`, `watched: bool`, `unwatched: bool`, `offset: int`, `limit: int`, `sort`, `genre`, `year`, `content_rating`, `director`, `actor`, `writer`, `resolution`, `network`, `studio` |
+| `library_get_contents` | Lists current library items with media IDs, filters, and pagination. | `library_name`, `watched: bool`, `unwatched: bool`, `offset: int`, `limit: int`, `sort`, `genre`, `year`, `content_rating`, `director`, `actor`, `writer`, `resolution`, `network`, `studio`, `username` |
 
 To list watched movies currently in your library (rather than playback history):
 
@@ -444,12 +444,18 @@ Tools for searching, inspecting, and editing specific media items.
 | Command | Description | Parameters |
 |---------|-------------|------------|
 | `media_search` | Search for media across all libraries. | `query`, `library_name`, `content_type` |
-| `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id` |
+| `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id`, `username` |
 | `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `library_name`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags` |
-| `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id` |
+| `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id`, `username` |
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `library_name`, `art_type: str` |
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `library_name`, `poster_path`, `poster_url`, `background_path`, `background_url` |
 | `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `library_name`, `art_type` |
+
+`library_get_contents` and `media_get_details` accept `username` for a Home or
+shared user, using the configured admin credentials. Omit it for your account.
+Watched filters and saved playback progress belong to the selected user; failed
+access returns an error. Movie, episode and track details include `watched`,
+`view_count`, `playback_offset_ms`, `in_progress`, and `progress_percent`.
 
 ### Watchlist Module
 
@@ -467,8 +473,11 @@ an entry, use its GUID from `watchlist_list`. These `plex://movie/...` or
 `plex://show/...` identifiers are cloud IDs, not local `media_id`/`ratingKey` values.
 List results default to 50 items; increase `offset` for the next page.
 
-All four tools use the account represented by `PLEX_TOKEN`, which must support
-plex.tv account access. The OAuth login does not select a different Plex account.
+All four tools use the configured `PLEX_TOKEN`. Pass `username` to select a user
+by exact username or profile title, or `home_user_id` to select by ID (takes
+precedence). Supply `pin` if Plex requires it. If Plex cannot access that user's
+Watchlist, the tool returns an error without falling back to your Watchlist.
+Omit the selectors to use the configured account.
 Add/remove operations confirm membership and leave media files and watched status unchanged.
 
 ### Playlist Module
@@ -476,15 +485,20 @@ Manage your personal and shared playlists.
 
 | Command | Description | Parameters |
 |---------|-------------|------------|
-| `playlist_list` | List all available playlists. | None |
-| `playlist_get_contents` | List items contained in a playlist. | `playlist_title`, `playlist_id` |
-| `playlist_create` | Create a new playlist from items. | `title`, `items: List[str]` |
-| `playlist_delete` | Delete a playlist. | `playlist_title`, `playlist_id` |
-| `playlist_add_to` | Add media items to a playlist. | `playlist_title`, `items: List[str]`, `playlist_id` |
-| `playlist_remove_from` | Remove specific items from a playlist. | `playlist_title`, `items: List[str]`, `playlist_id` |
-| `playlist_edit` | Change playlist title or summary. | `playlist_title`, `new_title`, `new_summary`, `playlist_id` |
-| `playlist_upload_poster` | Upload a custom poster image. | `playlist_title`, `image_path`, `playlist_id` |
-| `playlist_copy_to_user` | Share/Copy a playlist to another user. | `playlist_title`, `username`, `playlist_id` |
+| `playlist_list` | List playlists. | `library_name`, `content_type`, `username` |
+| `playlist_get_contents` | List playlist items. | `playlist_title`, `playlist_id`, `username` |
+| `playlist_create` | Create a playlist. | `playlist_title`, `item_titles`, `library_name`, `summary`, `username` |
+| `playlist_delete` | Delete a playlist. | `playlist_title`, `playlist_id`, `username` |
+| `playlist_add_to` | Add media items. | `playlist_title`, `playlist_id`, `item_titles`, `item_ids`, `username` |
+| `playlist_remove_from` | Remove playlist items. | `playlist_title`, `playlist_id`, `item_titles`, `username` |
+| `playlist_edit` | Change title or summary. | `playlist_title`, `playlist_id`, `new_title`, `new_summary`, `username` |
+| `playlist_upload_poster` | Upload a poster. | `playlist_title`, `playlist_id`, `poster_url`, `poster_filepath`, `username` |
+| `playlist_copy_to_user` | Copy a playlist to another user. | `playlist_title`, `playlist_id`, `username`, `source_username` |
+
+Pass `username` to work with a Home or shared user's playlists using the configured
+admin credentials. Omit it to use the configured account. Failed access returns an
+error. For `playlist_copy_to_user`, `username` is the destination; `source_username`
+selects the source account and defaults to the configured account.
 
 ### Collection Module
 Organize movies and shows into collections.
@@ -507,9 +521,14 @@ Information about the server owner and shared users.
 | `user_list_all_users` | List all users with types and IDs. | None |
 | `user_get_info` | Detailed info for a specific user. | `username` |
 | `user_get_on_deck` | Get "On Deck" items for a user. | `username` |
-| `user_get_continue_watching` | Get partially watched items to resume. | `limit: int` |
+| `user_get_continue_watching` | Get partially watched items to resume. | `limit`, `username`, `user_id` |
 | `user_get_watch_history` | Retrieve personal watch history. | `username`, `limit`, `content_type`, `user_id` |
 | `user_get_statistics` | Watch progress and usage statistics. | `time_period`, `username` |
+
+`user_get_continue_watching` accepts an exact username/profile title or a `user_id`
+from `user_list_all_users`. The ID takes precedence; omit both for the configured
+account. Access to other users requires the server administrator's token and is
+limited to this Plex server. Failed access returns an error.
 
 ### Sessions Module
 Monitor real-time server activity.
@@ -517,7 +536,7 @@ Monitor real-time server activity.
 | Command | Description | Parameters |
 |---------|-------------|------------|
 | `sessions_get_active` | Get currently playing items and clients. | None |
-| `sessions_get_media_playback_history` | History for a specific media item. | `media_title`, `library_name`, `media_id` |
+| `sessions_get_media_playback_history` | History for a specific media item. | `media_title`, `library_name`, `media_id`, `username` |
 
 ### Server Module
 Maintenance and administrative tools.

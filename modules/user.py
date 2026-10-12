@@ -4,6 +4,8 @@ import os
 import json
 import time
 import requests
+import asyncio
+from modules.profiles import server_for_user, ProfileAccessError
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 
@@ -343,7 +345,7 @@ async def user_get_on_deck(username: str = None) -> str:
         return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
 
 @mcp.tool()
-async def user_get_continue_watching(limit: int = 10) -> str:
+async def user_get_continue_watching(limit: int = 10, username: str = None, user_id: int = None) -> str:
     """Get items the user has partially watched and can continue.
     
     Unlike on_deck which shows the next unwatched episode in a series,
@@ -351,14 +353,20 @@ async def user_get_continue_watching(limit: int = 10) -> str:
     
     Args:
         limit: Maximum number of items to return (default 10)
+        username: Optional Home or shared user's exact username or profile title.
+        user_id: Optional ID from user_list_all_users; takes precedence over username.
+            Omit both selectors to use the configured account. Requires server-admin access for other users.
     
     Returns:
         List of partially-watched items with progress information.
     """
     try:
-        plex = connect_to_plex()
-        
-        items = plex.continueWatching()
+        if limit <= 0:
+            raise ProfileAccessError("limit must be positive")
+        def get_items():
+            plex = server_for_user(connect_to_plex(), username=username, user_id=user_id)
+            return plex.continueWatching()
+        items = await asyncio.to_thread(get_items)
         
         if not items:
             return json.dumps({
@@ -409,7 +417,7 @@ async def user_get_continue_watching(limit: int = 10) -> str:
     except Exception as e:
         return json.dumps({
             "status": "error",
-            "message": f"Error getting continue watching: {str(e)}"
+            "message": str(e) if isinstance(e, ProfileAccessError) else "Error getting continue watching for the selected profile"
         })
     
 @mcp.tool()

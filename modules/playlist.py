@@ -1,4 +1,5 @@
 from modules import mcp, connect_to_plex
+from modules.profiles import server_for_user
 from typing import List
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
@@ -7,17 +8,24 @@ import requests
 import base64
 import json
 
+def _playlist_by_id(plex, playlist_id):
+    # Resolve only among the selected user's playlists, never arbitrary media IDs.
+    return next((item for item in plex.playlists()
+                 if str(item.ratingKey) == str(playlist_id)), None)
+
+
 # Functions for playlists and collections
 @mcp.tool()
-async def playlist_list(library_name: str = None, content_type: str = None) -> str:
+async def playlist_list(library_name: str = None, content_type: str = None, username: str = None) -> str:
     """List all playlists on the Plex server.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         library_name: Optional library name to filter playlists from
         content_type: Optional content type to filter playlists (audio, video, photo)
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         playlists = []
         
         # Filter by content type if specified
@@ -67,17 +75,18 @@ async def playlist_list(library_name: str = None, content_type: str = None) -> s
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_create(playlist_title: str, item_titles: List[str], library_name: str = None, summary: str = None) -> str:
+async def playlist_create(playlist_title: str, item_titles: List[str], library_name: str = None, summary: str = None, username: str = None) -> str:
     """Create a new playlist with specified items.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title for the new playlist
         item_titles: List of media titles to include in the playlist
         library_name: Optional library name to limit search to
         summary: Optional summary description for the playlist
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         items = []
         
         # Search for items in all libraries or specific library
@@ -115,17 +124,18 @@ async def playlist_create(playlist_title: str, item_titles: List[str], library_n
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new_title: str = None, new_summary: str = None) -> str:
+async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new_title: str = None, new_summary: str = None, username: str = None) -> str:
     """Edit a playlist's details such as title and summary.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to edit (optional if playlist_id is provided)
         playlist_id: ID of the playlist to edit (optional if playlist_title is provided)
         new_title: Optional new title for the playlist
         new_summary: Optional new summary for the playlist
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -140,11 +150,11 @@ async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -207,17 +217,18 @@ async def playlist_edit(playlist_title: str = None, playlist_id: int = None, new
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = None, poster_url: str = None, poster_filepath: str = None) -> str:
+async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = None, poster_url: str = None, poster_filepath: str = None, username: str = None) -> str:
     """Upload a poster image for a playlist.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to set poster for (optional if playlist_id is provided)
         playlist_id: ID of the playlist to set poster for (optional if playlist_title is provided)
         poster_url: URL to an image to use as poster
         poster_filepath: Local file path to an image to use as poster
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -235,11 +246,11 @@ async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = 
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -306,16 +317,18 @@ async def playlist_upload_poster(playlist_title: str = None, playlist_id: int = 
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
+async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = None, username: str = None, source_username: str = None) -> str:
     """Copy a playlist to another user account.
     
     Args:
         playlist_title: Title of the playlist to copy (optional if playlist_id is provided)
         playlist_id: ID of the playlist to copy (optional if playlist_title is provided)
-        username: Username of the user to copy the playlist to
+        username: Destination username or profile title.
+        source_username: Optional source username or profile title; defaults to the configured account.
     """
     try:
-        plex = connect_to_plex()
+        admin = connect_to_plex()
+        plex = server_for_user(admin, username=source_username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -332,11 +345,11 @@ async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = N
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"status": "error", "message": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -369,16 +382,10 @@ async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = N
                 
             playlist = matching_playlists[0]
         
-        # Find the user
-        users = plex.myPlexAccount().users()
-        user = next((u for u in users if u.title.lower() == username.lower()), None)
-        
-        if not user:
-            return json.dumps({"status": "error", "message": f"User '{username}' not found"}, indent=4)
-        
-        # Copy the playlist
-        playlist.copyToUser(user=user)
-        
+        destination = server_for_user(admin, username=username)
+        items = [destination.fetchItem(item.ratingKey) for item in playlist.items()]
+        destination.createPlaylist(title=playlist.title, items=items)
+
         return json.dumps({
             "status": "success", 
             "message": f"Playlist '{playlist.title}' copied to user '{username}'"
@@ -387,17 +394,18 @@ async def playlist_copy_to_user(playlist_title: str = None, playlist_id: int = N
         return json.dumps({"status": "error", "message": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None, item_ids: List[int] = None) -> str:
+async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None, item_ids: List[int] = None, username: str = None) -> str:
     """Add items to a playlist.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to add to (optional if playlist_id is provided)
         playlist_id: ID of the playlist to add to (optional if playlist_title is provided)
         item_titles: List of media titles to add to the playlist (optional if item_ids is provided)
         item_ids: List of media IDs to add to the playlist (optional if item_titles is provided)
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -415,11 +423,11 @@ async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, i
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -539,16 +547,17 @@ async def playlist_add_to(playlist_title: str = None, playlist_id: int = None, i
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_remove_from(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None) -> str:
+async def playlist_remove_from(playlist_title: str = None, playlist_id: int = None, item_titles: List[str] = None, username: str = None) -> str:
     """Remove items from a playlist.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to remove from (optional if playlist_id is provided)
         playlist_id: ID of the playlist to remove from (optional if playlist_title is provided)
         item_titles: List of media titles to remove from the playlist
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -565,11 +574,11 @@ async def playlist_remove_from(playlist_title: str = None, playlist_id: int = No
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -648,15 +657,16 @@ async def playlist_remove_from(playlist_title: str = None, playlist_id: int = No
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -> str:
+async def playlist_delete(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
     """Delete a playlist.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to delete (optional if playlist_id is provided)
         playlist_id: ID of the playlist to delete (optional if playlist_title is provided)
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -670,11 +680,11 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -
             try:
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
+                    playlist = _playlist_by_id(plex, playlist_id)
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
@@ -720,10 +730,11 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -
         return json.dumps({"error": str(e)}, indent=4)
 
 @mcp.tool()
-async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None) -> str:
+async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None, username: str = None) -> str:
     """Get the contents of a playlist.
     
     Args:
+        username: Optional Plex username or profile title. Omit for the configured account. Failed access returns an error.
         playlist_title: Title of the playlist to get contents of (optional if playlist_id is provided)
         playlist_id: ID of the playlist to get contents of (optional if playlist_title is provided)
         
@@ -731,7 +742,7 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
         JSON object containing the playlist contents
     """
     try:
-        plex = connect_to_plex()
+        plex = server_for_user(connect_to_plex(), username=username)
         
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -743,18 +754,18 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
                 playlist = None
                 # Try fetching by ratingKey first
                 try:
-                    playlist = plex.fetchItem(playlist_id)
-                    print(playlist.items())
+                    playlist = _playlist_by_id(plex, playlist_id)
+
                 except:
                     # If that fails, try finding by key in all playlists
                     all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlist = next((p for p in all_playlists if str(p.ratingKey) == str(playlist_id)), None)
                 
                 if not playlist:
                     return json.dumps({"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4)
                 
                 # Get playlist contents
-                print(playlist)
+
                 return get_playlist_contents(playlist)
             except Exception as e:
                 if "500" in str(e):
@@ -792,7 +803,7 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
 
 def get_playlist_contents(playlist):
     """Helper function to get formatted playlist contents."""
-    print(playlist)
+
     try:
         items = playlist.items()
         playlist_items = []
