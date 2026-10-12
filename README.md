@@ -5,7 +5,7 @@ A powerful Model-Context-Protocol (MCP) server for interacting with Plex Media S
 ## Features
 
 - **Standardized API**: Unified JSON responses for all Plex operations.
-- **Multiple Transports**: Supports both `stdio` and `SSE` (Server-Sent Events).
+- **Multiple Transports**: Supports `stdio`, SSE (Server-Sent Events), and Streamable HTTP.
 - **Comprehensive Control**: Manage libraries, media, collections, playlists, clients, and users.
 - **Remote Ready**: Built-in OAuth 2.1 support for integration with remote AI platforms like Claude.ai.
 - **Admin Tools**: Access logs, monitor bandwidth, and run Butler tasks.
@@ -83,10 +83,36 @@ Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
 
 Go to https://claude.ai/settings/connectors and add a new connector with the following settings:
 - Name: Plex MCP
-- URL: https://plexmcp.example.com/sse
-- Add OAuth Client ID and Client Secret if OAuth is enabled
+- URL: `https://plexmcp.example.com/sse` for SSE, or `https://plexmcp.example.com/mcp` when running with `--transport streamable-http`.
+- If OAuth is enabled, enter your provider's Client ID and Client Secret in the advanced settings and complete sign-in.
+
+Register Claude's callback in your OAuth provider: `https://claude.ai/api/mcp/auth_callback`.
+See [Remote Access & OAuth](#remote-access--oauth) for provider and reverse-proxy configuration.
 
 <img width="516" height="515" alt="image" src="https://github.com/user-attachments/assets/7949a127-51a7-4c60-a121-511ee4a1f00d" />
+
+### 5. ChatGPT Connector Installation
+
+Start the server with `--transport streamable-http` and make it reachable at a public HTTPS URL.
+In ChatGPT's plugin settings, choose **Add custom MCP server**:
+
+- Name: Plex MCP
+- Server URL: `https://plexmcp.example.com/mcp`
+- Authentication: **OAuth** if enabled on the server; otherwise **None**.
+- For a confidential OAuth client, open **Advanced OAuth settings** and supply your provider's Client ID and Client Secret. These are separate from your Plex token.
+
+Register the exact ChatGPT callback URL with your OAuth provider. It can look like
+`https://chatgpt.com/connector/oauth/<callback-id>`; use the value requested by your
+connection, not the literal placeholder. Create the plugin, complete sign-in, and
+refresh its tools. Test it by asking ChatGPT to list your Plex libraries.
+
+If a reverse proxy uses browser-based login, allow the MCP endpoints (`/mcp`, plus
+`/sse` and `/messages/` if used), discovery endpoints, `/authorize`, and `/token`
+through to the MCP server. With server OAuth enabled, the MCP server itself validates
+the bearer token. See [Remote Access & OAuth](#remote-access--oauth) for the full setup.
+
+The website plugin and a local Codex MCP entry are separate connections. For local
+Codex OAuth configuration, see the [client setup instructions](#3-configure-each-client).
 
 
 ## Command Reference
