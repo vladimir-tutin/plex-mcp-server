@@ -56,6 +56,7 @@ PLEX_TOKEN=your-authentication-token
 MCP_OAUTH_ENABLED=true
 MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
 MCP_SERVER_URL=https://plexmcp.example.com
+MCP_OAUTH_AUDIENCE=your-oauth-client-id   # optional, recommended
 ```
 
 ### 3. MCP Client Config
@@ -228,20 +229,94 @@ Control playback and navigation on Plex clients.
 | `client_navigate` | Send remote control navigation commands. | `client_name`, `command`, `client_id` |
 | `client_set_streams` | Changes audio or subtitle tracks. | `client_name`, `audio_stream_id`, `subtitle_stream_id`, `client_id` |
 
+## Streamable HTTP
+
+Start the server with `--transport streamable-http` to expose `/mcp`:
+
+```bash
+plex-mcp-server --transport streamable-http --port 3001 --server-url https://plexmcp.example.com
+```
+
+Configure your client with `https://plexmcp.example.com/mcp`. This mode also keeps
+the legacy `/sse` and `/messages/` endpoints available for existing clients.
+The default transport remains SSE; `--transport stdio` is also supported.
+
+OAuth is optional on both HTTP transports. Enable it with `--oauth-enabled` or
+`MCP_OAUTH_ENABLED=true`, using the issuer settings below. Without OAuth, anyone
+who can reach the endpoints can call the tools; use an appropriate network boundary.
+
+Both SSE and Streamable HTTP validate Host and Origin headers to block DNS-rebinding
+attacks (a malicious web page driving your server through your browser). `--server-url`
+(or `MCP_SERVER_URL`) permits your public hostname and origin even with OAuth disabled.
+For additional proxy names, LAN addresses, or browser origins, set comma-separated
+`MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` (e.g. `MCP_ALLOWED_HOSTS=10.0.1.67:3002`).
+Loopback hosts are allowed by default. If a remote client gets `421 Invalid Host header`,
+add the hostname it connects with to one of these settings.
+
 ## Remote Access & OAuth
 
-The Plex MCP Server can be integrated with remote platforms like **Claude.ai** via SSE and optional OAuth 2.1. This allows you to talk to your MCP server directly from the Claude interface from anywhere.
+The Plex MCP Server can be integrated with remote platforms like **Claude.ai** via SSE or Streamable HTTP and optional OAuth 2.1. This allows you to talk to your MCP server directly from the Claude interface from anywhere.
 
-### Enabling OAuth
-1. Set `MCP_OAUTH_ENABLED=true` in your environment.
-2. Configure `MCP_OAUTH_ISSUER` (e.g., your OAuth provider URL).
-3. Set `MCP_SERVER_URL` to your public-facing URL.
-4. Configure your client to use your OAuth provider Client ID and Secret
+### How it works
+The MCP server acts as the OAuth front door: clients discover it via
+`/.well-known/oauth-protected-resource`, are sent to `/authorize` (which redirects to
+your identity provider), and exchange codes at `/token` (which the server proxies to the
+provider). Clients therefore only ever need **your MCP server URL** plus the provider's
+Client ID / Secret — they never talk to the provider directly. Access tokens are JWTs
+validated against the provider's JWKS; the server checks signature, expiry, issuer, and
+(optionally) audience on every request, on both SSE and Streamable HTTP.
+
+### 1. Create an OAuth provider (Authentik example)
+1. **Providers → Create → OAuth2/OpenID Provider.** Client type *Confidential*, signing
+   key set (RS256). Note the **Client ID** and **Client Secret**.
+2. **Redirect URIs** — add one entry per client you plan to use. These are the values
+   seen in practice:
+   | Client | Redirect URI |
+   |---|---|
+   | Claude.ai / Claude Desktop | `https://claude.ai/api/mcp/auth_callback` |
+   | ChatGPT connector | `https://chatgpt.com/connector/oauth/<connector-id>` — shown in the connector dialog |
+   | Codex CLI / local tools | loopback, random port: regex `^http://127\.0\.0\.1:[0-9]+/callback/<callback-id>$` |
+
+   Keep this list tight. A catch-all like `.*` lets anyone who can get you to click a
+   link capture an authorization code.
+3. **Applications → Create**, bind it to the provider, and **bind an access policy**
+   (your user or group). Any Authentik user who can authorize this application gets full
+   control of Plex — there are no per-user roles inside the MCP server.
+4. Copy the provider's **OpenID Configuration Issuer** URL, e.g.
+   `https://auth.example.com/application/o/plexmcp-oauth/` (trailing slash included).
+
+### 2. Configure the server
+```env
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
+MCP_SERVER_URL=https://plexmcp.example.com
+MCP_OAUTH_AUDIENCE=<Client ID>        # optional, recommended
+```
+or the equivalent flags: `--oauth-enabled --oauth-issuer … --server-url … --oauth-audience …`.
+
+- `MCP_SERVER_URL` must be the public HTTPS URL clients reach; it also becomes the
+  allowed Host/Origin for DNS-rebinding protection.
+- `MCP_OAUTH_AUDIENCE` makes the server reject tokens minted for any *other* client of
+  the same provider. Set it to the Client ID from step 1. Leaving it unset disables audience validation for compatibility with existing deployments.
+
+### 3. Configure each client
+Use the Client ID and Secret from step 1 and one of these URLs:
+
+| Client | URL | Notes |
+|---|---|---|
+| Claude.ai / Claude Desktop | `https://plexmcp.example.com/sse` | Claude probes with a Streamable HTTP POST first and falls back to SSE automatically |
+| ChatGPT | `https://plexmcp.example.com/mcp` | Authentication: OAuth, paste Client ID/Secret |
+| Codex CLI | `codex mcp add plex --url https://plexmcp.example.com/mcp --oauth-client-id <id> --oauth-client-secret <secret>` | opens a browser for login |
+
+Clients configured with `/mcp` use Streamable HTTP; `/sse` uses the legacy transport.
+Both are protected identically.
 
 ### Discovery Endpoints
-When OAuth is active, the following standard endpoints are exposed:
+When OAuth is active, the following standard endpoints are exposed without
+authentication:
 - `/.well-known/oauth-protected-resource`
 - `/.well-known/oauth-authorization-server`
+- `/authorize` (redirects to the provider) and `/token` (proxied to the provider)
 
 ## Response Formats
 
@@ -288,6 +363,8 @@ If an operation finds multiple items with the same name, it returns a list of sp
 
 ## Troubleshooting OAuth
 
-- **401 Unauthorized**: Ensure your `MCP_OAUTH_ISSUER` exactly matches the issuer URL in your identity provider (including trailing slashes).
+- **401 Unauthorized**: Ensure your `MCP_OAUTH_ISSUER` exactly matches the issuer URL in your identity provider (including trailing slashes). If `MCP_OAUTH_AUDIENCE` is set, it must equal the client ID your provider puts in the token's `aud` claim.
 - **Public URL**: `MCP_SERVER_URL` must be reachable by the client (e.g., plexmcp.example.com) and should use HTTPS.
-- **Redirect URIs**: For Claude.ai, the redirect URI in your provider must be `https://claude.ai/api/mcp/auth_callback`.
+- **Redirect URI mismatch** (provider error page after login): the client's callback isn't in the provider's redirect list — see the table in step 1. Use the exact callback requested by the client. For Codex, replace `<callback-id>` in the example with the actual callback ID; only the loopback port should vary.
+- **Client hangs after login / "Couldn't connect"**: check the server log for `Token valid` vs `Token validation failed`. A failure right after a successful `/token` usually means `MCP_OAUTH_AUDIENCE` doesn't match the token's `aud` — unset it to confirm, then set it to the Client ID.
+- **First request slow**: token validation caches discovery metadata until restart and caches JWKS for `MCP_OAUTH_JWKS_CACHE_TTL` seconds (default 3600). After rotating signing keys in the provider, restart the server or wait for the cache to expire.

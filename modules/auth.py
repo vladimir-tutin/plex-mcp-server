@@ -8,9 +8,8 @@ This module provides JWT validation using JWKS from an external authorization se
 import os
 import json
 import jwt
-import requests
+import aiohttp
 from typing import Optional, Dict, Any
-from functools import lru_cache
 from datetime import datetime, timedelta
 
 
@@ -23,7 +22,8 @@ class OAuthConfig:
         self._issuer = None
         self._server_url = None
         self._jwks_cache_ttl = None
-    
+        self._audience = None
+
     def _load(self):
         """Lazy load configuration from environment variables."""
         if not self._loaded:
@@ -31,6 +31,7 @@ class OAuthConfig:
             self._issuer = os.getenv("MCP_OAUTH_ISSUER", "")
             self._server_url = os.getenv("MCP_SERVER_URL", "")
             self._jwks_cache_ttl = int(os.getenv("MCP_OAUTH_JWKS_CACHE_TTL", "3600"))
+            self._audience = os.getenv("MCP_OAUTH_AUDIENCE", "")
             self._loaded = True
             
     def reload(self):
@@ -60,7 +61,10 @@ class OAuthConfig:
 
     @property
     def audience(self):
-        return self.server_url
+        """Expected `aud` claim (the OAuth client ID). Empty disables the check,
+        since Authentik sets aud to the client ID rather than the resource URL."""
+        self._load()
+        return self._audience
     
     @property
     def resource_server_url(self):
@@ -77,8 +81,10 @@ class OAuthConfig:
 oauth_config = OAuthConfig()
 
 
-@lru_cache(maxsize=1)
-def get_jwks_uri(issuer: str) -> str:
+_discovery_cache: Dict[str, str] = {}
+
+
+async def get_jwks_uri(issuer: str, session: aiohttp.ClientSession) -> str:
     """
     Fetch the JWKS URI from the OIDC discovery endpoint.
     
@@ -88,12 +94,18 @@ def get_jwks_uri(issuer: str) -> str:
     Returns:
         JWKS URI string
     """
+    if issuer in _discovery_cache:
+        return _discovery_cache[issuer]
     discovery_url = f"{issuer.rstrip('/')}/.well-known/openid-configuration"
     try:
-        response = requests.get(discovery_url, timeout=10)
-        response.raise_for_status()
-        metadata = response.json()
-        return metadata.get("jwks_uri", "")
+        async with session.get(discovery_url) as response:
+            response.raise_for_status()
+            metadata = await response.json()
+        uri = metadata.get("jwks_uri", "")
+        if uri:
+            _discovery_cache.clear()
+            _discovery_cache[issuer] = uri
+        return uri
     except Exception as e:
         raise ValueError(f"Failed to fetch OIDC discovery metadata: {str(e)}")
 
@@ -105,8 +117,9 @@ class JWKSCache:
         self._ttl_seconds = ttl_seconds
         self._cache: Optional[Dict[str, Any]] = None
         self._cache_time: Optional[datetime] = None
+        self._cache_uri: Optional[str] = None
         
-    def get_jwks(self, jwks_uri: str) -> Dict[str, Any]:
+    async def get_jwks(self, jwks_uri: str, session: aiohttp.ClientSession) -> Dict[str, Any]:
         """
         Fetch JWKS from the URI, using cache if valid.
         
@@ -119,17 +132,18 @@ class JWKSCache:
         now = datetime.now()
         
         # Check if cache is valid
-        if self._cache and self._cache_time:
+        if self._cache and self._cache_time and self._cache_uri == jwks_uri:
             ttl = self._ttl_seconds if self._ttl_seconds is not None else oauth_config.jwks_cache_ttl
             if (now - self._cache_time) < timedelta(seconds=ttl):
                 return self._cache
         
         # Fetch fresh JWKS
         try:
-            response = requests.get(jwks_uri, timeout=10)
-            response.raise_for_status()
-            self._cache = response.json()
-            self._cache_time = now
+            async with session.get(jwks_uri) as response:
+                response.raise_for_status()
+                self._cache = await response.json()
+            self._cache_time = datetime.now()
+            self._cache_uri = jwks_uri
             return self._cache
         except Exception as e:
             raise ValueError(f"Failed to fetch JWKS: {str(e)}")
@@ -139,7 +153,7 @@ class JWKSCache:
 jwks_cache = JWKSCache()
 
 
-def validate_token(token: str) -> Dict[str, Any]:
+async def validate_token(token: str) -> Dict[str, Any]:
     """
     Validate a JWT access token using JWKS from the configured issuer.
     
@@ -156,14 +170,16 @@ def validate_token(token: str) -> Dict[str, Any]:
         raise ValueError("OAuth is not properly configured")
     
     try:
-        # Get JWKS URI from discovery
-        jwks_uri = get_jwks_uri(oauth_config.issuer)
-        if not jwks_uri:
-            raise ValueError("JWKS URI not found in OIDC metadata")
-        
-        # Fetch JWKS with our cache (uses requests with proper headers)
-        jwks = jwks_cache.get_jwks(jwks_uri)
-        
+        # Fetch metadata without blocking the HTTP server's event loop. Reuse
+        # one connection pool for discovery and keys; cached requests do no I/O.
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5)
+        ) as session:
+            jwks_uri = await get_jwks_uri(oauth_config.issuer, session)
+            if not jwks_uri:
+                raise ValueError("JWKS URI not found in OIDC metadata")
+            jwks = await jwks_cache.get_jwks(jwks_uri, session)
+
         # Decode token header to get the key id (kid)
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
@@ -179,16 +195,20 @@ def validate_token(token: str) -> Dict[str, Any]:
         if not signing_key:
             raise ValueError(f"No matching key found for kid: {kid}")
         
-        # Validate token - skip audience check since Authentik sets aud to client_id
+        # Audience is only enforced when MCP_OAUTH_AUDIENCE is configured, so a
+        # provider shared by several clients can't have one client's tokens
+        # accepted by another.
+        audience = oauth_config.audience or None
         payload = jwt.decode(
             token,
             signing_key,  # RSAAlgorithm.from_jwk returns the key directly
             algorithms=["RS256", "ES256"],
             issuer=oauth_config.issuer,
+            audience=audience,
             options={
                 "verify_signature": True,
                 "verify_exp": True,
-                "verify_aud": False,  # Authentik sets aud to client_id, not resource server
+                "verify_aud": bool(audience),
                 "verify_iss": True
             }
         )
