@@ -49,7 +49,7 @@ class WatchlistTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(w._profile_token.get(), before)
             return [{"title": before}], 1
         with patch.object(w, "_home_token", side_effect=lambda user, pin: str(user)), patch.object(w, "_page", side_effect=page):
-            results = await asyncio.gather(w.watchlist_list(home_user_id=42), w.watchlist_list(home_user_id=43))
+            results = await asyncio.gather(w.watchlist_list(include_state=False, home_user_id=42), w.watchlist_list(include_state=False, home_user_id=43))
             self.assertEqual([json.loads(r)["items"][0]["title"] for r in results], ["42", "43"])
             self.assertIsNone(w._profile_token.get())
             self.assertEqual(os.environ["PLEX_TOKEN"], "configured-token")
@@ -69,7 +69,7 @@ class WatchlistTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(w._home_token(None, None, username="eric"), "profile-token")
             account.switchHomeUser.assert_called_once_with(target, pin=None)
         with patch.object(w, "_home_token", side_effect=ValueError("Plex denied access")) as select, patch.object(w, "_request", AsyncMock()) as request:
-            calls = [w.watchlist_list(username="Eric"), w.watchlist_search("Example", username="Eric"),
+            calls = [w.watchlist_list(include_state=False, username="Eric"), w.watchlist_search("Example", username="Eric"),
                      w.watchlist_add(GUID, username="Eric"), w.watchlist_remove(GUID, username="Eric")]
             for call in calls:
                 result = json.loads(await call)
@@ -84,7 +84,7 @@ class WatchlistTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_pagination(self):
         with patch.object(w, "_request", AsyncMock(return_value={"MediaContainer": {"Metadata": [ROW], "totalSize": 51}})) as request:
-            result = json.loads(await w.watchlist_list(offset=50, limit=1))
+            result = json.loads(await w.watchlist_list(include_state=False, offset=50, limit=1))
             self.assertEqual(result["items"], [ROW])
             self.assertEqual(result["totalItems"], 51)
             self.assertEqual(request.call_args.args[2]["X-Plex-Container-Start"], 50)
@@ -125,12 +125,12 @@ class WatchlistTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(w, "_request", AsyncMock()) as request:
             for guid in ["123", "plex://episode/abc", "plex://movie/../../token", "https://evil.test"]:
                 self.assertEqual(json.loads(await w.watchlist_add(guid))["status"], "error")
-            self.assertEqual(json.loads(await w.watchlist_list(limit=0))["status"], "error")
+            self.assertEqual(json.loads(await w.watchlist_list(include_state=False, limit=0))["status"], "error")
             self.assertEqual(json.loads(await w.watchlist_search("", limit=1))["status"], "error")
             request.assert_not_awaited()
 
     async def test_upstream_errors_do_not_expose_credentials(self):
         with patch.object(w, "_page", AsyncMock(side_effect=RuntimeError("https://plex.test?X-Plex-Token=secret"))):
-            result = await w.watchlist_list()
+            result = await w.watchlist_list(include_state=False, )
             self.assertNotIn("secret", result)
             self.assertEqual(json.loads(result)["status"], "error")

@@ -1,6 +1,8 @@
 from modules import mcp, connect_to_plex
 from modules.profiles import server_for_user
-from typing import List
+from typing import List, Optional
+import asyncio
+from plexapi import utils
 from plexapi.playlist import Playlist # type: ignore
 from plexapi.exceptions import NotFound, BadRequest  # type: ignore
 import os
@@ -844,7 +846,163 @@ def get_playlist_contents(playlist):
             "items": playlist_items
         }
         
+        if getattr(playlist, "smart", False):
+            playlist_info["smart"] = True
+            playlist_info["definition"] = playlist.filters()
+
         # Return just the playlist info without status wrappers
         return json.dumps(playlist_info, indent=4)
     except Exception as e:
         return json.dumps({"error": f"Error formatting playlist contents: {str(e)}"}, indent=4)
+
+
+def _smart_playlist(plex, playlist_title, playlist_id):
+    if playlist_id is not None:
+        result = _playlist_by_id(plex, playlist_id)
+        if result is None:
+            raise ValueError("Playlist not found for the selected user")
+        return result
+    if not playlist_title:
+        raise ValueError("Provide playlist_id or playlist_title")
+    matches = [p for p in plex.playlists() if p.title.casefold() == playlist_title.casefold()]
+    if len(matches) != 1:
+        raise ValueError("Playlist title must match exactly one playlist; use playlist_list and supply playlist_id")
+    return matches[0]
+
+
+def _smart_result(playlist):
+    playlist.reload()
+    items = playlist.fetchItems(playlist.key + "/items", maxresults=20, container_size=20)
+    return {
+        "status": "success", "title": playlist.title, "playlist_id": playlist.ratingKey,
+        "smart": True, "definition": playlist.filters(), "item_count": playlist.leafCount,
+        "items": [{"title": i.title, "media_id": i.ratingKey, "type": i.type,
+                   "show": getattr(i, "grandparentTitle", None)} for i in items],
+        "preview_limit": 20,
+    }
+
+
+def _smart_error(exc):
+    message = str(exc) if isinstance(exc, (ValueError, BadRequest)) else "Plex smart playlist request failed"
+    return json.dumps({"status": "error", "message": message})
+
+
+@mcp.tool()
+async def playlist_get_smart_filter_options(library_name: str, field: Optional[str] = None,
+                                          libtype: Optional[str] = None, username: Optional[str] = None) -> str:
+    """Discover fields, operators, sort options or field choices for smart playlists.
+
+    Args:
+        library_name: Library to search.
+        field: Optional field whose available values should be listed, such as genre.
+        libtype: Search type; defaults to movie, episode or track for the library.
+            Use show to match show titles, or episode to match episode titles.
+        username: Optional Plex username or profile title; omit for the configured account.
+    """
+    def run():
+        plex = server_for_user(connect_to_plex(), username=username)
+        section = plex.library.section(library_name)
+        selected_type = libtype or section.METADATA_TYPE
+        section.getFilterType(selected_type)
+        if field:
+            choices = section.listFilterChoices(field, libtype=selected_type)
+            return {"library": section.title, "libtype": selected_type, "field": field,
+                    "choices": [{"title": c.title, "value": c.key} for c in choices]}
+        fields = [{"field": f.key, "title": f.title, "type": f.type,
+                   "operators": [o.key for o in section.listOperators(f.type)]}
+                  for f in section.listFields(libtype=selected_type)]
+        return {"library": section.title, "libtype": selected_type, "fields": fields,
+                "sorts": [{"field": f.key, "title": f.title, "defaultDirection": f.defaultDirection}
+                          for f in section.listSorts(libtype=selected_type)]}
+    try:
+        return json.dumps(await asyncio.to_thread(run))
+    except Exception as exc:
+        return _smart_error(exc)
+
+
+@mcp.tool()
+async def playlist_create_smart(playlist_title: str, library_name: str, filters: Optional[dict] = None,
+                                sort: Optional[str] = None, limit: Optional[int] = None,
+                                libtype: Optional[str] = None, summary: Optional[str] = None,
+                                username: Optional[str] = None) -> str:
+    """Create a saved library search that Plex keeps populated automatically.
+
+    Args:
+        playlist_title: New playlist title.
+        library_name: Library to search.
+        filters: Plex filters, e.g. {"year>>": 2000}, or {"title": "Band of Brothers"} with libtype show.
+        sort: Sort fields, e.g. year:desc. Discover valid fields with playlist_get_smart_filter_options.
+        limit: Positive maximum result count; omit for no limit.
+        libtype: Search type, defaulting to movie, episode or track. Show/artist searches produce playable episodes/tracks.
+        summary: Optional description.
+        username: Optional Plex username or profile title; omit for the configured account.
+
+    Returns the saved definition and up to 20 current items. Use playlist_get_contents for all items.
+    """
+    def run():
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        if not playlist_title.strip():
+            raise ValueError("playlist_title must not be empty")
+        plex = server_for_user(connect_to_plex(), username=username)
+        section = plex.library.section(library_name)
+        playlist = plex.createPlaylist(title=playlist_title, section=section, smart=True,
+                                       filters=filters, sort=sort, limit=limit,
+                                       libtype=libtype or section.METADATA_TYPE)
+        if summary is not None:
+            try:
+                playlist.editSummary(summary)
+            except Exception:
+                return {"status": "error", "message": "Playlist was created, but its summary could not be saved",
+                        "playlist_id": playlist.ratingKey, "created": True}
+        return _smart_result(playlist)
+    try:
+        return json.dumps(await asyncio.to_thread(run))
+    except Exception as exc:
+        return _smart_error(exc)
+
+
+@mcp.tool()
+async def playlist_edit_smart_filters(playlist_title: Optional[str] = None, playlist_id: Optional[int] = None,
+                                      filters: Optional[dict] = None, sort: Optional[str] = None,
+                                      limit: Optional[int] = None, libtype: Optional[str] = None,
+                                      username: Optional[str] = None) -> str:
+    """Edit a smart playlist while preserving settings you omit, including its search type.
+
+    Args:
+        playlist_title: Existing title, optional when playlist_id is supplied.
+        playlist_id: ID from playlist_list or playlist_create_smart.
+        filters: Replace filters; omit to preserve, or use {} to clear them.
+        sort: Replace sort order; omit to preserve, or use an empty string to clear it.
+        limit: Replace result limit; omit to preserve, or use 0 to remove it.
+        libtype: Change search type explicitly; omit to preserve show/episode/artist/track matching.
+        username: Optional Plex username or profile title; omit for the configured account.
+
+    Returns the saved definition and up to 20 current items. playlist_get_contents also returns the definition.
+    """
+    def run():
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be nonnegative")
+        plex = server_for_user(connect_to_plex(), username=username)
+        playlist = _smart_playlist(plex, playlist_title, playlist_id)
+        if not playlist.smart:
+            raise ValueError("This playlist is not smart")
+        definition = playlist.filters()
+        section = playlist.section()
+        selected_type = libtype or definition.get("libtype")
+        if not selected_type:
+            raise ValueError("Cannot determine the saved search type; supply libtype explicitly")
+        # PlexAPI.updateFilters always uses section.METADATA_TYPE, losing show/artist semantics.
+        search_key = section._buildSearchKey(
+            libtype=selected_type,
+            filters=definition.get("filters") if filters is None else filters,
+            sort=definition.get("sort") if sort is None else (sort or None),
+            limit=definition.get("limit") if limit is None else (limit or None),
+        )
+        uri = plex._uriRoot() + search_key
+        plex.query(playlist.key + "/items" + utils.joinArgs({"uri": uri}), method=plex._session.put)
+        return _smart_result(playlist)
+    try:
+        return json.dumps(await asyncio.to_thread(run))
+    except Exception as exc:
+        return _smart_error(exc)

@@ -39,7 +39,7 @@ The published image is `ghcr.io/vladimir-tutin/plex-mcp-server:latest` for Linux
 amd64 and arm64. It runs as a non-root user and serves Streamable HTTP at `/mcp`
 and legacy SSE at `/sse`. No media folders need to be mounted: it uses Plex's API.
 
-Choose [Docker Compose](#docker-compose) or [Unraid](#unraid), then follow
+Follow the Docker setup below, then see
 [Public HTTPS access](#public-https-access) for hosted clients such as Claude.ai or ChatGPT.
 
 #### Docker Compose
@@ -75,40 +75,21 @@ docker compose logs -f
 The LAN example's client URL is `http://192.168.1.20:3001/mcp`. Hosted clients
 need a reachable HTTPS endpoint; follow [Public HTTPS access](#public-https-access).
 
-#### Unraid
+#### Other Docker deployments
 
-In **Docker → Add Container**, enter:
+Use `ghcr.io/vladimir-tutin/plex-mcp-server:latest`, publish container port
+`3001` (TCP), and set these environment variables:
 
-| Field | Value |
+| Key | Example value |
 |---|---|
-| Name | `plex-mcp-server` |
-| Repository | `ghcr.io/vladimir-tutin/plex-mcp-server:latest` |
-| Network Type | `Bridge` |
-| Privileged | Off |
+| `PLEX_URL` | `http://192.168.1.10:32400` |
+| `PLEX_TOKEN` | `your-plex-token` |
+| `MCP_SERVER_URL` | `http://192.168.1.20:3001` |
+| `MCP_TRANSPORT` | `streamable-http` (default; serves both `/mcp` and `/sse`) |
 
-Use **Add another Path, Port, Variable, Label or Device** to add a **Port**:
-container port `3001`, an unused host port such as `3001`, connection type **TCP**.
-Then add each of these as a **Variable**, using the exact key shown:
-
-| Key | Example value | Purpose |
-|---|---|---|
-| `PLEX_URL` | `http://192.168.1.10:32400` | Plex server address reachable from the container |
-| `PLEX_TOKEN` | `your-plex-token` | Plex API credential |
-| `MCP_SERVER_URL` | `http://192.168.1.20:3001` | Address clients use to reach this MCP server |
-| `MCP_OAUTH_ENABLED` | `false` | LAN-only example; enable OAuth for public access below |
-
-Use your Unraid IP and chosen host port in `MCP_SERVER_URL`. The **Name** of a
-variable is a display label; its **Key** must match the table. No `.env` file or
-media path mapping is required when entering variables in Unraid.
-
-Click **Apply**. For this example, connect a LAN client to
-`http://192.168.1.20:3001/mcp`. The endpoint speaks MCP; it is not a browser dashboard.
-See Unraid's [container configuration guide](https://docs.unraid.net/unraid-os/using-unraid-to/run-docker-containers/managing-and-customizing-containers/)
-for managing variables and port mappings.
-
-`MCP_BIND_ADDRESS` and `MCP_PUBLISHED_PORT` are settings used by this repository's
-Compose file. In Unraid, configure the port mapping in the form instead; adding
-those two variables does not change Unraid's published port.
+Use your Docker host's address and published port in `MCP_SERVER_URL`.
+`MCP_BIND_ADDRESS` and `MCP_PUBLISHED_PORT` only configure this repository's
+Compose file; for other deployments, set the port mapping directly.
 
 #### Public HTTPS access
 
@@ -116,7 +97,7 @@ Setting `MCP_SERVER_URL` does **not** create DNS records, configure HTTPS, or
 publish the container. Complete these steps before connecting a hosted client:
 
 1. Create an OAuth provider using [Remote Access & OAuth](#remote-access--oauth).
-2. Set these values in Compose's `.env`, or add them as **Variables** in Unraid:
+2. Set these values in Compose's `.env` or your container's environment:
 
    ```env
    MCP_SERVER_URL=https://plexmcp.example.com
@@ -131,7 +112,7 @@ publish the container. Complete these steps before connecting a hosted client:
    including its path and trailing slash.
 3. Point the public hostname at your reverse proxy and configure a valid HTTPS
    certificate. Forward that hostname to the MCP container's published address,
-   for example `http://192.168.1.20:3001`. This is the Docker/Unraid host and
+   for example `http://192.168.1.20:3001`. This is the Docker host and
    **host port**, not Plex's port `32400` or Authentik's address.
 4. Forward all paths on that hostname unchanged, preserve the public `Host` and
    `Authorization` headers, and allow streaming responses without buffering.
@@ -142,8 +123,8 @@ publish the container. Complete these steps before connecting a hosted client:
    them with a browser-login page at the proxy. This includes `/mcp`, `/sse`,
    `/messages/`, `/.well-known/` discovery paths, `/authorize`, and `/token`.
    The MCP server validates bearer tokens; Authentik handles the OAuth login.
-6. Apply the Unraid changes, or run `docker compose up -d --no-build` after editing
-   `.env`. Configure clients with `https://plexmcp.example.com/mcp` (Streamable HTTP)
+6. Recreate the container with the updated settings (`docker compose up -d --no-build`
+   for Compose). Configure clients with `https://plexmcp.example.com/mcp` (Streamable HTTP)
    or `https://plexmcp.example.com/sse` (legacy SSE).
 
 With OAuth enabled, an unauthenticated request to `/mcp` or `/sse` should return
@@ -302,7 +283,12 @@ plex-mcp-server --transport streamable-http --port 3001 --server-url https://ple
 
 Configure your client with `https://plexmcp.example.com/mcp`. This mode also keeps
 the legacy `/sse` and `/messages/` endpoints available for existing clients.
-The default transport remains SSE; `--transport stdio` is also supported.
+Set `MCP_TRANSPORT` in `.env` or your container's environment to select
+`streamable-http`, `sse`, or `stdio`. An explicit `--transport` flag overrides it.
+Docker defaults to `streamable-http`, serving both `/mcp` and legacy `/sse`.
+Direct execution defaults to `sse` when neither the variable nor flag is supplied.
+For Docker stdio, the MCP client must launch the container with `docker run --rm -i`;
+no port mapping is needed.
 
 OAuth is optional on both HTTP transports. Enable it with `--oauth-enabled` or
 `MCP_OAUTH_ENABLED=true`, using the issuer settings below. Without OAuth, anyone
@@ -352,7 +338,7 @@ validated against the provider's JWKS; the server checks signature, expiry, issu
 
 ### 2. Configure the server
 
-For Docker or Unraid, enter these as environment variables using the
+For Docker, enter these as environment variables using the
 [public HTTPS setup](#public-https-access), which also covers DNS and the reverse proxy.
 
 ```env
@@ -401,7 +387,7 @@ Tools for exploring and managing your Plex libraries.
 | `library_scan` | Scans a library for new files. | `library_name` |
 | `library_get_details` | Gets detailed information about a library. | `library_name` |
 | `library_get_recently_added` | Lists recently added items in a library. | `library_name`, `limit: int` |
-| `library_get_contents` | Lists current library items with media IDs, filters, and pagination. | `library_name`, `watched: bool`, `unwatched: bool`, `offset: int`, `limit: int`, `sort`, `genre`, `year`, `content_rating`, `director`, `actor`, `writer`, `resolution`, `network`, `studio`, `username` |
+| `library_get_contents` | Lists current library items with media IDs, filters, and pagination. | `library_name` (optional), `media_type`, `watched: bool`, `unwatched: bool`, `offset: int`, `limit: int`, `sort`, `title`, `genre`, `year`, `content_rating`, `director`, `actor`, `writer`, `resolution`, `network`, `studio`, `username` |
 
 To list watched movies currently in your library (rather than playback history):
 
@@ -412,9 +398,31 @@ To list watched movies currently in your library (rather than playback history):
 Each result includes `media_id` (Plex's `ratingKey`) for looking up or deleting that
 specific item. The default page size is 50; increase `offset` to retrieve later pages.
 `totalItems` is the count matching the server-side filters, not just the current page.
-Watch state belongs to the user represented by `PLEX_TOKEN`.
+Use `title` to combine a case-insensitive Plex title search with other filters:
+`{"library_name":"Movies","title":"Avengers","watched":true}`.
+This returns all matches with normal pagination. It is not exact-only or arbitrary
+substring matching: `Avengers` matches titles containing that word, while `venger`
+does not. Title searches use the selected media type; TV libraries default to show names.
+Watch state belongs to the selected `username`, or the configured account when omitted.
 
-Movie results also include `inProgress` and `progressPercent`, based on Plex's
+To search across all accessible libraries, omit `library_name` and supply `media_type`:
+
+```json
+{"media_type":"movie","watched":true,"genre":"Action"}
+```
+
+Supported types are `movie`, `show`, `episode`, `artist`, `album`, and `track`.
+You can also select a type within a named library, such as `episode` in a TV library
+or `track` in a music library. Type-selected results include the originating `library`
+and `library_id`; episodes include their show/season/episode and tracks their artist/album.
+Filters and sorting apply before pagination across the combined results. At least
+one of `library_name` or `media_type` is required. Broad episode queries can be slower
+on large libraries; a library or title filter narrows the search.
+
+For music, `watched`/`unwatched` select played/unplayed items. Artist and album played
+state does not imply every track is complete.
+
+Movie, episode, and track results also include `inProgress` and `progressPercent`, based on Plex's
 saved playback offset, even if the movie is absent from Continue Watching.
 `inProgress` is true when that offset is positive; it does not mean the movie is
 currently playing. `progressPercent` is the saved position as a percentage of
@@ -427,16 +435,19 @@ progress, for example during a rewatch. The `watched` and `unwatched` filters st
 use Plex's watched state, not saved progress. For cleanup, inspect `inProgress`
 as well as `watched` to avoid selecting movies with a saved playback position.
 
-For TV libraries, `watched=true` includes **partially watched shows** with at least
-one played episode. A show's returned `watched` flag is true only when all its
-available episodes are played. `watchStatus` explicitly reports `unwatched`,
-`partial`, or `watched`, and `watchedEpisodeCount` gives the played count alongside
-`episodeCount`. Empty shows are reported as `unwatched`. For cleanup workflows,
-check `watchStatus == "watched"` before considering an entire show for deletion;
-the filter alone does not mean a show is complete.
+For shows, `watched=true` selects series with no unwatched episodes;
+`unwatched=true` selects those with episodes remaining, including partially watched
+series. Results include `watchStatus` (`unwatched`, `partial`, or `watched`),
+`watchedEpisodeCount`, and `episodeCount`. Completion refers to episodes currently
+in the library, not future or missing episodes. Empty shows report `watched=false`.
+Do not set both filters to true.
 
-`unwatched=true` uses Plex's unwatched filter; for shows, it can include partially
-watched series with episodes remaining. Do not set both filters to true.
+Filters must apply to the selected media type; unsupported combinations return an
+error rather than being silently ignored. Episode genre, rating, people, network,
+and studio filters use the parent show. Track year and studio use the parent album.
+Artist filters support title and genre; albums and tracks also support year and studio.
+Resolution applies to movies and episodes (`sd`, `480`, `576`, `720`, `1080`, `2k`,
+`4k`, or `8k`).
 
 ### Media Module
 Tools for searching, inspecting, and editing specific media items.
@@ -461,9 +472,17 @@ access returns an error. Movie, episode and track details include `watched`,
 
 Manage the Plex account Watchlist, including movies and shows outside your library.
 
+By default, listing also looks up the selected user's library state. Movies include saved
+progress and watched status; shows include watched and total episode counts. Matching
+uses Plex GUIDs first, then searches by title and verifies shared IMDb, TMDB, or TVDB
+IDs. Each matching library copy is returned in `library_items`. Unmatched items have
+unknown availability (`null`), not an unwatched state. Lookup failures leave the
+Watchlist available with a `state_error`. Set `include_state=false` to skip library
+lookups. Individual episode progress is not included.
+
 | Command | Description | Parameters |
 |---|---|---|
-| `watchlist_list` | List Watchlist titles. | `offset`, `limit` (1–100) |
+| `watchlist_list` | List Watchlist titles with local availability and watched/progress state. | `offset`, `limit` (1–100), `include_state` (default `true`) |
 | `watchlist_search` | Search Plex Discover for titles to add. | `query`, `content_type` (movie/show), `limit` (1–100) |
 | `watchlist_add` | Add a movie or show. | `guid` |
 | `watchlist_remove` | Remove a movie or show. | `guid` |
@@ -499,6 +518,26 @@ Pass `username` to work with a Home or shared user's playlists using the configu
 admin credentials. Omit it to use the configured account. Failed access returns an
 error. For `playlist_copy_to_user`, `username` is the destination; `source_username`
 selects the source account and defaults to the configured account.
+
+#### Smart playlists
+
+Smart playlists save library filters that Plex reapplies as your library changes.
+All three tools accept `username`, including Home and shared users.
+
+| Tool | Purpose |
+|---|---|
+| `playlist_get_smart_filter_options` | Discover fields, operators, sorting and field values for `library_name` and optional `libtype`. |
+| `playlist_create_smart` | Save `filters`, `sort`, `limit` and `libtype` as a playlist. |
+| `playlist_edit_smart_filters` | Update a playlist by ID or title, preserving omitted settings. |
+
+Use `libtype="show"` with `{"title": "Band of Brothers"}` to match the show.
+Use `libtype="episode"` to match episode titles. Show and artist searches produce
+playable episodes and tracks. Use the same `libtype` when discovering filters.
+
+Creation and editing return the saved `definition`, item count and up to 20 items.
+`playlist_get_contents` returns all current items and the saved definition.
+On edit, omitted values remain unchanged; `{}` clears filters, an empty sort string
+clears sorting, and `limit=0` removes the limit. `libtype` changes only when supplied.
 
 ### Collection Module
 Organize movies and shows into collections.

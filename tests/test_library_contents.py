@@ -44,6 +44,90 @@ class LibraryContentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls[1].args[2]["X-Plex-Container-Start"], "5")
         self.assertEqual(calls[1].args[2]["X-Plex-Container-Size"], "1")
 
+    async def test_title_combines_with_filters_before_pagination(self):
+        result, calls = await self.contents(
+            "movie", [{"ratingKey": "42", "title": "Dungeons & Dragons", "viewCount": 1}],
+            title="  Dungeons & Dragons  ", watched=True, genre="Fantasy", offset=1, limit=1, total=3,
+        )
+        query = parse_qs(urlparse(calls[1].args[1]).query)
+        self.assertEqual(query["title"], ["Dungeons & Dragons"])
+        self.assertEqual(query["unwatched"], ["0"])
+        self.assertEqual(query["genre"], ["Fantasy"])
+        self.assertEqual((result["totalItems"], result["offset"], result["size"]), (3, 1, 1))
+        tool = next(t for t in await mcp.list_tools() if t.name == "library_get_contents")
+        self.assertIn("title", tool.inputSchema["properties"])
+
+    async def test_blank_title_does_not_filter(self):
+        for title in (None, "", "   "):
+            _, calls = await self.contents("movie", [], title=title)
+            self.assertNotIn("title", parse_qs(urlparse(calls[1].args[1]).query))
+
+    async def test_cross_library_track_filters_and_pagination(self):
+        plex = SimpleNamespace(_baseurl="http://plex.test:32400/", _token="selected")
+        response = {"MediaContainer": {"totalSize": 12, "size": 1, "Metadata": [{
+            "ratingKey": "50", "type": "track", "title": "Example", "viewCount": 2,
+            "duration": 1000, "viewOffset": 500, "librarySectionTitle": "Music", "librarySectionID": 3,
+            "grandparentTitle": "Artist", "parentTitle": "Album"}]}}
+        with patch("modules.library.connect_to_plex", return_value=plex), patch(
+            "modules.library.server_for_user", return_value=plex
+        ) as select, patch("modules.library.async_get_json", new_callable=AsyncMock, return_value=response) as request:
+            result = json.loads(await library_get_contents(media_type="track", title="Example", watched=True,
+                                                          offset=2, limit=1, username="Eric"))
+        select.assert_called_once_with(plex, username="Eric")
+        self.assertEqual(request.await_count, 1)
+        url = urlparse(request.call_args.args[1])
+        self.assertEqual(url.path, "/library/all")
+        query = parse_qs(url.query)
+        self.assertEqual(query['type'], ['10'])
+        self.assertEqual(query['title'], ['Example'])
+        self.assertEqual(query['unwatched'], ['0'])
+        self.assertEqual(result['totalItems'], 12)
+        item = result['items'][0]
+        self.assertEqual((item['library'], item['artist'], item['album'], item['progressPercent']),
+                         ('Music', 'Artist', 'Album', 50.0))
+        self.assertTrue(item['watched'])
+
+    async def test_media_type_validation_before_connection(self):
+        with patch("modules.library.connect_to_plex") as connect:
+            for args in ({}, {"media_type": "wrong"}, {"media_type": "movie", "limit": 0}):
+                self.assertIn('error', json.loads(await library_get_contents(**args)))
+            connect.assert_not_called()
+
+    async def test_episode_type_in_named_library(self):
+        result, calls = await self.contents('show', [{'ratingKey': '2', 'title': 'Episode',
+            'type': 'episode', 'grandparentTitle': 'Show', 'parentIndex': 1, 'index': 2}], media_type='episode')
+        self.assertEqual(parse_qs(urlparse(calls[1].args[1]).query)['type'], ['4'])
+        self.assertEqual(result['items'][0]['show'], 'Show')
+        self.assertEqual(result['items'][0]['episode'], 2)
+
+    async def test_incompatible_filter_is_not_silently_ignored(self):
+        plex=SimpleNamespace(_baseurl='http://plex/',_token='test')
+        with patch('modules.library.connect_to_plex',return_value=plex), patch(
+            'modules.library.async_get_json',new_callable=AsyncMock
+        ) as request:
+            result=json.loads(await library_get_contents(media_type='track',resolution='4k'))
+            self.assertIn('Unsupported filters',result['error'])
+            request.assert_not_awaited()
+
+    async def test_invalid_resolution_rejected_before_connection(self):
+        with patch('modules.library.connect_to_plex') as connect:
+            result=json.loads(await library_get_contents(media_type='movie',resolution='bad-value'))
+            self.assertIn('resolution must be',result['error'])
+            connect.assert_not_called()
+
+    async def test_unwatched_show_filter_uses_remaining_episodes(self):
+        _,calls=await self.contents('show',[],unwatched=True)
+        query=parse_qs(urlparse(calls[1].args[1]).query)
+        self.assertEqual(query['show.unwatchedLeaves'],['1'])
+        self.assertNotIn('unwatched',query)
+
+    async def test_episode_parent_genre_filter(self):
+        _,calls=await self.contents('show',[],media_type='episode',genre='Drama',year=2020)
+        query=parse_qs(urlparse(calls[1].args[1]).query)
+        self.assertEqual(query['show.genre'],['Drama'])
+        self.assertEqual(query['year'],['2020'])
+        self.assertNotIn('genre',query)
+
     async def test_unwatched_movies(self):
         result, calls = await self.contents(
             "movie", [{"ratingKey": "43", "title": "Unplayed"}], unwatched=True,
@@ -103,17 +187,17 @@ class LibraryContentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([x["media_id"] for x in result["items"]], ["0", "1", "2", "3"])
         self.assertNotIn("unwatched", parse_qs(urlparse(calls[1].args[1]).query))
 
-    async def test_watched_show_filter_retains_partial_shows_and_total(self):
+    async def test_watched_show_filter_uses_episode_completion_and_preserves_total(self):
         result, calls = await self.contents(
-            "show", [{"ratingKey": "99", "title": "Partial"}],
-            [{"MediaContainer": {"Metadata": [{"leafCount": 10, "viewedLeafCount": 2}]}}],
+            "show", [{"ratingKey": "99", "title": "Complete"}],
+            [{"MediaContainer": {"Metadata": [{"leafCount": 10, "viewedLeafCount": 10}]}}],
             total=339, watched=True, offset=2, limit=1,
         )
-        self.assertEqual(result["items"][0]["watchStatus"], "partial")
-        self.assertFalse(result["items"][0]["watched"])
+        self.assertEqual(result["items"][0]["watchStatus"], "watched")
+        self.assertTrue(result["items"][0]["watched"])
         self.assertEqual(result["totalItems"], 339)
         self.assertEqual(result["size"], 1)
-        self.assertEqual(parse_qs(urlparse(calls[1].args[1]).query)["unwatched"], ["0"])
+        self.assertEqual(parse_qs(urlparse(calls[1].args[1]).query)["show.unwatchedLeaves"], ["0"])
 
     async def test_conflicting_filters_rejected_before_connection(self):
         with patch("modules.library.connect_to_plex") as connect:
@@ -144,7 +228,7 @@ class LibraryContentsTests(unittest.IsolatedAsyncioTestCase):
     async def test_tool_schema_exposes_watch_filter_documentation(self):
         tool = next(t for t in await mcp.list_tools() if t.name == "library_get_contents")
         self.assertIn("watched", tool.inputSchema["properties"])
-        self.assertIn("Partially watched shows are included", tool.description)
+        self.assertIn("Partially watched shows are excluded", tool.description)
         self.assertIn("watchStatus", tool.description)
         self.assertIn("inProgress", tool.description)
         self.assertIn("progressPercent", tool.description)

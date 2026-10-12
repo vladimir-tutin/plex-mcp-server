@@ -11,7 +11,8 @@ from functools import wraps
 import aiohttp
 from plexapi.myplex import MyPlexAccount
 
-from modules import mcp
+from modules import mcp, connect_to_plex
+from modules.profiles import server_for_user
 
 DISCOVER = "https://discover.provider.plex.tv"
 GUID = re.compile(r"plex://(movie|show)/([A-Za-z0-9._-]+)\Z")
@@ -96,6 +97,89 @@ def _item(row):
             "type": row.get("type"), "year": row.get("year")}
 
 
+def _external_ids(row):
+    return {g['id'] for g in row.get('Guid', [])
+            if isinstance(g.get('id'), str) and g['id'].startswith(('imdb://', 'tmdb://', 'tvdb://'))}
+
+
+def _library_state(row):
+    result = {"media_id": row.get("ratingKey"), "library": row.get("librarySectionTitle")}
+    if row.get("type") == "show":
+        total = int(row.get("leafCount") or 0)
+        played = int(row.get("viewedLeafCount") or 0)
+        result.update(watched=total > 0 and played >= total,
+                      watched_episode_count=played, episode_count=total,
+                      watch_status="watched" if total > 0 and played >= total else
+                      "partial" if played else "unwatched")
+    else:
+        offset = max(0, int(row.get("viewOffset") or 0))
+        duration = int(row.get("duration") or 0)
+        result.update(watched=int(row.get("viewCount") or 0) > 0,
+                      view_count=int(row.get("viewCount") or 0),
+                      playback_offset_ms=offset, in_progress=offset > 0,
+                      progress_percent=round(min(100, offset / duration * 100), 1) if duration > 0 else None)
+    return result
+
+
+async def _enrich_items(rows, username=None, home_user_id=None):
+    try:
+        plex = await asyncio.to_thread(lambda: server_for_user(connect_to_plex(), username=username, user_id=home_user_id))
+        headers = {"X-Plex-Token": plex._token, "Accept": "application/json"}
+        base = plex._baseurl.rstrip('/')
+    except Exception:
+        return [{**_item(row), "available_on_server": None, "match_status": "unavailable",
+                 "library_items": [], "state_error": "Unable to access this user's library state"} for row in rows]
+    semaphore = asyncio.Semaphore(6)
+    async with aiohttp.ClientSession(headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async def search(params):
+            found = []
+            start = 0
+            while True:
+                query = {**params, "includeGuids": 1, "X-Plex-Container-Start": start,
+                         "X-Plex-Container-Size": 100}
+                async with session.get(base + '/library/all', params=query, allow_redirects=False) as response:
+                    response.raise_for_status()
+                    container = (await response.json())["MediaContainer"]
+                batch = container.get("Metadata", [])
+                found.extend(batch)
+                start += len(batch)
+                if start >= container.get("totalSize", start):
+                    return found
+                if not batch:
+                    raise ValueError("Incomplete library search")
+
+        async def metadata(ids):
+            if not ids:
+                return []
+            async with session.get(base + '/library/metadata/' + ','.join(str(int(i)) for i in ids),
+                                   params={'includeGuids': 1}, allow_redirects=False) as response:
+                response.raise_for_status()
+                return (await response.json())['MediaContainer'].get('Metadata', [])
+
+        async def enrich(row):
+            result = _item(row)
+            try:
+                async with semaphore:
+                    kind = 1 if row['type'] == 'movie' else 2
+                    candidates = await search({'type': kind, 'guid': row['guid']})
+                    matches = [x for x in candidates if x.get('guid') == row['guid'] and x.get('type') == row['type']]
+                    if not matches and _external_ids(row):
+                        # Titles only find candidates; shared provider IDs establish identity.
+                        candidates = await search({'type': kind, 'title': row['title']})
+                        detailed = await metadata([x['ratingKey'] for x in candidates])
+                        matches = [x for x in detailed if x.get('type') == row['type']
+                                   and _external_ids(row) & _external_ids(x)]
+                    unique = {x['ratingKey']: x for x in matches}
+                    result.update(available_on_server=True if unique else None,
+                                  match_status="matched" if unique else "not_found",
+                                  library_items=[_library_state(x) for x in unique.values()])
+            except Exception:
+                result.update(available_on_server=None, match_status="unavailable", library_items=[],
+                              state_error="Unable to read library state for this item")
+            return result
+        return await asyncio.gather(*(enrich(row) for row in rows))
+
+
 async def _page(offset, limit):
     data = await _request("GET", "/library/sections/watchlist/all", {
         "X-Plex-Container-Start": offset, "X-Plex-Container-Size": limit, "includeGuids": 1})
@@ -126,10 +210,13 @@ def _error(exc):
 
 @mcp.tool()
 @_with_home_profile
-async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = None, pin: str = None, username: str = None) -> str:
+async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = None, pin: str = None, username: str = None, include_state: bool = True) -> str:
     """List the PLEX_TOKEN account's Watchlist, including titles outside the library.
 
     Args:
+        include_state: Include matching local library items and their watched/progress state (default True).
+            Unmatched availability is unknown, not proof that media is absent.
+            Shows report episode counts; individual episode progress is not included.
         offset: Number of items to skip.
         limit: Page size, from 1 to 100.
         home_user_id: Optional Plex Home profile ID from user_list_all_users. Omit for the configured account.
@@ -140,7 +227,8 @@ async def watchlist_list(offset: int = 0, limit: int = 50, home_user_id: int = N
         if offset < 0 or not 1 <= limit <= 100:
             raise ValueError("offset must be nonnegative and limit must be between 1 and 100")
         rows, total = await _page(offset, limit)
-        return json.dumps({"items": [_item(row) for row in rows], "totalItems": total,
+        items = await _enrich_items(rows, username, home_user_id) if include_state else [_item(row) for row in rows]
+        return json.dumps({"items": items, "totalItems": total,
                            "offset": offset, "limit": limit, "size": len(rows)})
     except Exception as exc:
         return _error(exc)

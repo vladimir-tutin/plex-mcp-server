@@ -88,7 +88,10 @@ from modules.playlist import (
     playlist_remove_from,
     playlist_edit,
     playlist_upload_poster,
-    playlist_copy_to_user
+    playlist_copy_to_user,
+    playlist_get_smart_filter_options,
+    playlist_create_smart,
+    playlist_edit_smart_filters
 )
 # Collection module functions
 from modules.collection import (
@@ -420,8 +423,9 @@ def main():
     
     # Setup command line arguments
     parser = argparse.ArgumentParser(description='Run Plex MCP Server')
-    parser.add_argument('--transport', choices=['stdio', 'sse', 'streamable-http'], default='sse',
-                        help='Transport method to use (stdio, sse, or streamable-http)')
+    parser.add_argument('--transport', choices=['stdio', 'sse', 'streamable-http'],
+                        default=os.environ.get('MCP_TRANSPORT', 'sse'),
+                        help='Transport method (default: MCP_TRANSPORT, otherwise sse)')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to (for SSE)')
     parser.add_argument('--port', type=int, default=3001, help='Port to listen on (for SSE)')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
@@ -444,6 +448,8 @@ def main():
                         help='Expected token audience (your OAuth client ID); unset disables the check')
 
     args = parser.parse_args()
+    if args.transport not in ('stdio', 'sse', 'streamable-http'):
+        parser.error('MCP_TRANSPORT must be stdio, sse, or streamable-http')
 
     # Apply configuration updates to modules
     # This ensures that both CLI args and environment variables (loaded above)
