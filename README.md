@@ -1,10 +1,10 @@
 # Plex MCP Server
 
-A powerful Model-Context-Protocol (MCP) server for interacting with Plex Media Server. It provides a standardized JSON-based interface for automation, AI agents (like Claude), and custom integrations.
+An MCP server for managing Plex libraries, media, and playback from Claude, ChatGPT, and other MCP clients.
 
 ## Features
 
-- **Standardized API**: Unified JSON responses for all Plex operations.
+- **JSON responses**: Structured results for Plex operations.
 - **Multiple Transports**: Supports `stdio`, SSE (Server-Sent Events), and Streamable HTTP.
 - **Comprehensive Control**: Manage libraries, media, collections, playlists, clients, and users.
 - **Remote Ready**: Built-in OAuth 2.1 support for integration with remote AI platforms like Claude.ai.
@@ -33,10 +33,38 @@ cd plex-mcp-server
 pip install -e .
 ```
 
-### Option 4: Docker Compose
+### Option 4: Docker
 
-From a checkout of this repository, copy `.env.docker.example` to `.env` and set
-`PLEX_URL` and `PLEX_TOKEN`, then run:
+The published image is `ghcr.io/vladimir-tutin/plex-mcp-server:latest` for Linux
+amd64 and arm64. It runs as a non-root user and serves Streamable HTTP at `/mcp`
+and legacy SSE at `/sse`. No media folders need to be mounted: it uses Plex's API.
+
+Choose [Docker Compose](#docker-compose) or [Unraid](#unraid), then follow
+[Public HTTPS access](#public-https-access) for hosted clients such as Claude.ai or ChatGPT.
+
+#### Docker Compose
+
+```bash
+git clone https://github.com/vladimir-tutin/plex-mcp-server.git
+cd plex-mcp-server
+cp .env.docker.example .env
+```
+
+Edit `.env` before starting. For a trusted LAN deployment, for example:
+
+```env
+PLEX_URL=http://192.168.1.10:32400
+PLEX_TOKEN=your-plex-token
+MCP_BIND_ADDRESS=192.168.1.20
+MCP_PUBLISHED_PORT=3001
+MCP_SERVER_URL=http://192.168.1.20:3001
+MCP_OAUTH_ENABLED=false
+```
+
+Replace `192.168.1.10` with the Plex address and `192.168.1.20` with the Docker
+host's address. Without OAuth, anyone who can reach this port can use the tools.
+The supplied example file defaults to loopback (`127.0.0.1`) instead, for access
+from the Docker host only. Keep `.env` private.
 
 ```bash
 docker compose pull
@@ -44,39 +72,124 @@ docker compose up -d --no-build
 docker compose logs -f
 ```
 
-The published image is available from `ghcr.io/vladimir-tutin/plex-mcp-server:1.2.0`
-for Linux amd64 and arm64. Docker Hub is not required. Version tags identify releases;
-`latest` follows the most recently published release image and `edge` follows main.
-To build your own image from the checked-out source, use `docker compose build --pull`
-and then `docker compose up -d --no-build` instead of pulling an image.
+The LAN example's client URL is `http://192.168.1.20:3001/mcp`. Hosted clients
+need a reachable HTTPS endpoint; follow [Public HTTPS access](#public-https-access).
 
-The image runs as a non-root user. It defaults
-to Streamable HTTP at `/mcp`, with legacy `/sse` and `/messages/` also available.
-No Plex media volume is needed: the container connects to Plex over its API.
-Use a Plex address reachable from the container; `localhost` refers to the container itself.
+#### Unraid
 
-Compose publishes `127.0.0.1:3001` by default. For LAN clients or a reverse proxy on
-another machine, set `MCP_BIND_ADDRESS` to the Docker host's LAN address (or `0.0.0.0`)
-and choose `MCP_PUBLISHED_PORT`. Set `MCP_SERVER_URL` to the address clients use,
-such as `http://192.168.1.20:3001` or `https://plexmcp.example.com`, so Host validation
-accepts it. OAuth and additional Host/Origin settings use the same environment
-variables documented below. Keep `.env` private; it is excluded from the image.
+In **Docker → Add Container**, enter:
 
-To build and run without Compose:
+| Field | Value |
+|---|---|
+| Name | `plex-mcp-server` |
+| Repository | `ghcr.io/vladimir-tutin/plex-mcp-server:latest` |
+| Network Type | `Bridge` |
+| Privileged | Off |
+
+Use **Add another Path, Port, Variable, Label or Device** to add a **Port**:
+container port `3001`, an unused host port such as `3001`, connection type **TCP**.
+Then add each of these as a **Variable**, using the exact key shown:
+
+| Key | Example value | Purpose |
+|---|---|---|
+| `PLEX_URL` | `http://192.168.1.10:32400` | Plex server address reachable from the container |
+| `PLEX_TOKEN` | `your-plex-token` | Plex API credential |
+| `MCP_SERVER_URL` | `http://192.168.1.20:3001` | Address clients use to reach this MCP server |
+| `MCP_OAUTH_ENABLED` | `false` | LAN-only example; enable OAuth for public access below |
+
+Use your Unraid IP and chosen host port in `MCP_SERVER_URL`. The **Name** of a
+variable is a display label; its **Key** must match the table. No `.env` file or
+media path mapping is required when entering variables in Unraid.
+
+Click **Apply**. For this example, connect a LAN client to
+`http://192.168.1.20:3001/mcp`. The endpoint speaks MCP; it is not a browser dashboard.
+See Unraid's [container configuration guide](https://docs.unraid.net/unraid-os/using-unraid-to/run-docker-containers/managing-and-customizing-containers/)
+for managing variables and port mappings.
+
+`MCP_BIND_ADDRESS` and `MCP_PUBLISHED_PORT` are settings used by this repository's
+Compose file. In Unraid, configure the port mapping in the form instead; adding
+those two variables does not change Unraid's published port.
+
+#### Public HTTPS access
+
+Setting `MCP_SERVER_URL` does **not** create DNS records, configure HTTPS, or
+publish the container. Complete these steps before connecting a hosted client:
+
+1. Create an OAuth provider using [Remote Access & OAuth](#remote-access--oauth).
+2. Set these values in Compose's `.env`, or add them as **Variables** in Unraid:
+
+   ```env
+   MCP_SERVER_URL=https://plexmcp.example.com
+   MCP_OAUTH_ENABLED=true
+   MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
+   MCP_OAUTH_AUDIENCE=your-oauth-client-id
+   ```
+
+   Keep `PLEX_URL` and `PLEX_TOKEN` set as above. These are separate from your
+   OAuth credentials. `MCP_SERVER_URL` is the public **base URL**, without `/mcp`
+   or `/sse`. `MCP_OAUTH_ISSUER` is the provider's exact issuer URL,
+   including its path and trailing slash.
+3. Point the public hostname at your reverse proxy and configure a valid HTTPS
+   certificate. Forward that hostname to the MCP container's published address,
+   for example `http://192.168.1.20:3001`. This is the Docker/Unraid host and
+   **host port**, not Plex's port `32400` or Authentik's address.
+4. Forward all paths on that hostname unchanged, preserve the public `Host` and
+   `Authorization` headers, and allow streaming responses without buffering.
+   With Compose, the published address must be reachable by the proxy: use the
+   Docker host's LAN address when the proxy runs elsewhere. A proxy in another
+   container cannot reach this container through its own `127.0.0.1`.
+5. Let requests reach the MCP server's OAuth middleware rather than intercepting
+   them with a browser-login page at the proxy. This includes `/mcp`, `/sse`,
+   `/messages/`, `/.well-known/` discovery paths, `/authorize`, and `/token`.
+   The MCP server validates bearer tokens; Authentik handles the OAuth login.
+6. Apply the Unraid changes, or run `docker compose up -d --no-build` after editing
+   `.env`. Configure clients with `https://plexmcp.example.com/mcp` (Streamable HTTP)
+   or `https://plexmcp.example.com/sse` (legacy SSE).
+
+With OAuth enabled, an unauthenticated request to `/mcp` or `/sse` should return
+**401**, while `/.well-known/oauth-protected-resource` should return JSON. A proxy
+login page or a 502 indicates the request is not reaching the expected MCP handler.
+Finish by signing in from your client and asking it to list your Plex libraries.
+
+When moving an existing deployment, update the reverse proxy's upstream to the
+new host and port. You can retain the public MCP URL and client URLs. If the OAuth
+provider also moves, preserve its issuer URL and configuration or update
+`MCP_OAUTH_ISSUER` and the client credentials to match.
+
+#### Updating or building the image
+
+`latest` tracks published releases; `edge` tracks main. Use a version tag such as
+`1.2.0` to pin a release. Running containers do not update automatically.
+
+For Compose, update with:
 
 ```bash
-docker build -t plex-mcp-server:local .
-docker run -d --name plex-mcp-server --restart unless-stopped --init \
-  --env-file .env -p 127.0.0.1:3001:3001 plex-mcp-server:local
+docker compose pull
+docker compose up -d --no-build
 ```
 
-For standalone SSE, override the command with `--transport sse --host 0.0.0.0 --port 3001`.
-For stdio, use `docker run --rm -i --env-file .env plex-mcp-server:local --transport stdio`
-without publishing a port. To update a Compose deployment, select the desired image
-version in `docker-compose.yml`, then run `docker compose pull` and
+To build from source, run `docker compose build --pull`, then
 `docker compose up -d --no-build`.
 
+To run the published image without Compose, prepare `.env` with the server
+variables above and choose the host binding explicitly:
+
+```bash
+docker run -d --name plex-mcp-server --restart unless-stopped --init \
+  --env-file .env -p 127.0.0.1:3001:3001 ghcr.io/vladimir-tutin/plex-mcp-server:latest
+```
+
+This command publishes on loopback only. For standalone SSE, append
+`--transport sse --host 0.0.0.0 --port 3001`. For stdio, use
+`docker run --rm -i --env-file .env ghcr.io/vladimir-tutin/plex-mcp-server:latest --transport stdio`
+without publishing a port.
+
 ## Configuration
+
+For containers, use the [Docker setup](#option-4-docker). The following options also
+apply to direct Python installations. `PLEX_URL` points to Plex; `MCP_SERVER_URL`
+is the address of this MCP service. Inside a container, `localhost` refers to the
+container itself, so use a reachable network address for Plex.
 
 Set your Plex server URL and Token using one of these methods:
 
@@ -92,15 +205,7 @@ PLEX_URL=http://localhost:32400
 PLEX_TOKEN=your-authentication-token
 MCP_OAUTH_ENABLED=false
 ```
-or with OAuth Enabled
-```env
-PLEX_URL=http://localhost:32400
-PLEX_TOKEN=your-authentication-token
-MCP_OAUTH_ENABLED=true
-MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
-MCP_SERVER_URL=https://plexmcp.example.com
-MCP_OAUTH_AUDIENCE=your-oauth-client-id   # optional, recommended
-```
+For OAuth settings, see [Remote Access & OAuth](#remote-access--oauth).
 
 ### 3. MCP Client Config
 Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
@@ -181,14 +286,107 @@ Register the exact ChatGPT callback URL with your OAuth provider. It can look li
 connection, not the literal placeholder. Create the plugin, complete sign-in, and
 refresh its tools. Test it by asking ChatGPT to list your Plex libraries.
 
-If a reverse proxy uses browser-based login, allow the MCP endpoints (`/mcp`, plus
-`/sse` and `/messages/` if used), discovery endpoints, `/authorize`, and `/token`
-through to the MCP server. With server OAuth enabled, the MCP server itself validates
-the bearer token. See [Remote Access & OAuth](#remote-access--oauth) for the full setup.
+For reverse-proxy routing, see [Public HTTPS access](#public-https-access).
 
 The website plugin and a local Codex MCP entry are separate connections. For local
 Codex OAuth configuration, see the [client setup instructions](#3-configure-each-client).
 
+
+## Streamable HTTP
+
+Start the server with `--transport streamable-http` to expose `/mcp`:
+
+```bash
+plex-mcp-server --transport streamable-http --port 3001 --server-url https://plexmcp.example.com
+```
+
+Configure your client with `https://plexmcp.example.com/mcp`. This mode also keeps
+the legacy `/sse` and `/messages/` endpoints available for existing clients.
+The default transport remains SSE; `--transport stdio` is also supported.
+
+OAuth is optional on both HTTP transports. Enable it with `--oauth-enabled` or
+`MCP_OAUTH_ENABLED=true`, using the issuer settings below. Without OAuth, anyone
+who can reach the endpoints can call the tools; use an appropriate network boundary.
+
+Both SSE and Streamable HTTP validate Host and Origin headers to block DNS-rebinding
+attacks (a malicious web page driving your server through your browser). `--server-url`
+(or `MCP_SERVER_URL`) permits your public hostname and origin even with OAuth disabled.
+For additional proxy names, LAN addresses, or browser origins, set comma-separated
+`MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` (e.g. `MCP_ALLOWED_HOSTS=192.168.1.20:3001`).
+Loopback hosts are allowed by default. If a remote client gets `421 Invalid Host header`,
+add its host and port to `MCP_ALLOWED_HOSTS`. For a rejected browser origin,
+add the full origin (scheme, host, and port) to `MCP_ALLOWED_ORIGINS`.
+
+## Remote Access & OAuth
+
+OAuth protects both HTTP transports. The following setup uses Authentik as the identity provider.
+
+### How it works
+The MCP server acts as the OAuth front door: clients discover it via
+`/.well-known/oauth-protected-resource`, are sent to `/authorize` (which redirects to
+your identity provider), and exchange codes at `/token` (which the server proxies to the
+provider). Clients therefore only ever need **your MCP server URL** plus the provider's
+Client ID / Secret. The browser visits the provider to complete sign-in. Access tokens are JWTs
+validated against the provider's JWKS; the server checks signature, expiry, issuer, and
+(optionally) audience on every request, on both SSE and Streamable HTTP.
+
+### 1. Create an OAuth provider (Authentik example)
+1. **Providers → Create → OAuth2/OpenID Provider.** Client type *Confidential*, signing
+   key set (RS256). Note the **Client ID** and **Client Secret**.
+2. **Redirect URIs** — add one entry per client you plan to use. These are the values
+   seen in practice:
+
+   | Client | Redirect URI |
+   |---|---|
+   | Claude.ai / Claude Desktop | `https://claude.ai/api/mcp/auth_callback` |
+   | ChatGPT connector | `https://chatgpt.com/connector/oauth/<connector-id>` — shown in the connector dialog |
+   | Codex CLI / local tools | loopback, random port: regex `^http://127\.0\.0\.1:[0-9]+/callback/<callback-id>$` |
+
+   Keep this list tight. A catch-all like `.*` lets anyone who can get you to click a
+   link capture an authorization code.
+3. **Applications → Create**, bind it to the provider, and **bind an access policy**
+   (your user or group). Any Authentik user who can authorize this application gets full
+   control of Plex — there are no per-user roles inside the MCP server.
+4. Copy the provider's **OpenID Configuration Issuer** URL, e.g.
+   `https://auth.example.com/application/o/plexmcp-oauth/` (trailing slash included).
+
+### 2. Configure the server
+
+For Docker or Unraid, enter these as environment variables using the
+[public HTTPS setup](#public-https-access), which also covers DNS and the reverse proxy.
+
+```env
+MCP_OAUTH_ENABLED=true
+MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
+MCP_SERVER_URL=https://plexmcp.example.com
+MCP_OAUTH_AUDIENCE=<Client ID>        # optional, recommended
+```
+or the equivalent flags: `--oauth-enabled --oauth-issuer … --server-url … --oauth-audience …`.
+
+- `MCP_SERVER_URL` must be the public HTTPS URL clients reach; it also becomes the
+  allowed Host/Origin for DNS-rebinding protection. Use the base URL without `/mcp`
+  or `/sse`; HTTPS is provided by your reverse proxy.
+- `MCP_OAUTH_AUDIENCE` makes the server reject tokens minted for any *other* client of
+  the same provider. Set it to the Client ID from step 1. Leaving it unset disables audience validation for compatibility with existing deployments.
+
+### 3. Configure each client
+Use the Client ID and Secret from step 1 and one of these URLs:
+
+| Client | URL | Notes |
+|---|---|---|
+| Claude.ai / Claude Desktop | `https://plexmcp.example.com/sse` | Claude probes with a Streamable HTTP POST first and falls back to SSE automatically |
+| ChatGPT | `https://plexmcp.example.com/mcp` | Authentication: OAuth, paste Client ID/Secret |
+| Codex CLI | `codex mcp add plex --url https://plexmcp.example.com/mcp --oauth-client-id <id> --oauth-client-secret <secret>` | opens a browser for login |
+
+Clients configured with `/mcp` use Streamable HTTP; `/sse` uses the legacy transport.
+Both are protected identically.
+
+### Discovery Endpoints
+When OAuth is active, the following standard endpoints are exposed without
+authentication:
+- `/.well-known/oauth-protected-resource`
+- `/.well-known/oauth-authorization-server`
+- `/authorize` (redirects to the provider) and `/token` (proxied to the provider)
 
 ## Command Reference
 
@@ -329,95 +527,6 @@ Control playback and navigation on Plex clients.
 | `client_control_playback` | Play, Pause, Stop, Seek, Skip. | `client_name`, `action`, `offset`, `client_id` |
 | `client_navigate` | Send remote control navigation commands. | `client_name`, `command`, `client_id` |
 | `client_set_streams` | Changes audio or subtitle tracks. | `client_name`, `audio_stream_id`, `subtitle_stream_id`, `client_id` |
-
-## Streamable HTTP
-
-Start the server with `--transport streamable-http` to expose `/mcp`:
-
-```bash
-plex-mcp-server --transport streamable-http --port 3001 --server-url https://plexmcp.example.com
-```
-
-Configure your client with `https://plexmcp.example.com/mcp`. This mode also keeps
-the legacy `/sse` and `/messages/` endpoints available for existing clients.
-The default transport remains SSE; `--transport stdio` is also supported.
-
-OAuth is optional on both HTTP transports. Enable it with `--oauth-enabled` or
-`MCP_OAUTH_ENABLED=true`, using the issuer settings below. Without OAuth, anyone
-who can reach the endpoints can call the tools; use an appropriate network boundary.
-
-Both SSE and Streamable HTTP validate Host and Origin headers to block DNS-rebinding
-attacks (a malicious web page driving your server through your browser). `--server-url`
-(or `MCP_SERVER_URL`) permits your public hostname and origin even with OAuth disabled.
-For additional proxy names, LAN addresses, or browser origins, set comma-separated
-`MCP_ALLOWED_HOSTS` and `MCP_ALLOWED_ORIGINS` (e.g. `MCP_ALLOWED_HOSTS=10.0.1.67:3002`).
-Loopback hosts are allowed by default. If a remote client gets `421 Invalid Host header`,
-add the hostname it connects with to one of these settings.
-
-## Remote Access & OAuth
-
-The Plex MCP Server can be integrated with remote platforms like **Claude.ai** via SSE or Streamable HTTP and optional OAuth 2.1. This allows you to talk to your MCP server directly from the Claude interface from anywhere.
-
-### How it works
-The MCP server acts as the OAuth front door: clients discover it via
-`/.well-known/oauth-protected-resource`, are sent to `/authorize` (which redirects to
-your identity provider), and exchange codes at `/token` (which the server proxies to the
-provider). Clients therefore only ever need **your MCP server URL** plus the provider's
-Client ID / Secret — they never talk to the provider directly. Access tokens are JWTs
-validated against the provider's JWKS; the server checks signature, expiry, issuer, and
-(optionally) audience on every request, on both SSE and Streamable HTTP.
-
-### 1. Create an OAuth provider (Authentik example)
-1. **Providers → Create → OAuth2/OpenID Provider.** Client type *Confidential*, signing
-   key set (RS256). Note the **Client ID** and **Client Secret**.
-2. **Redirect URIs** — add one entry per client you plan to use. These are the values
-   seen in practice:
-   | Client | Redirect URI |
-   |---|---|
-   | Claude.ai / Claude Desktop | `https://claude.ai/api/mcp/auth_callback` |
-   | ChatGPT connector | `https://chatgpt.com/connector/oauth/<connector-id>` — shown in the connector dialog |
-   | Codex CLI / local tools | loopback, random port: regex `^http://127\.0\.0\.1:[0-9]+/callback/<callback-id>$` |
-
-   Keep this list tight. A catch-all like `.*` lets anyone who can get you to click a
-   link capture an authorization code.
-3. **Applications → Create**, bind it to the provider, and **bind an access policy**
-   (your user or group). Any Authentik user who can authorize this application gets full
-   control of Plex — there are no per-user roles inside the MCP server.
-4. Copy the provider's **OpenID Configuration Issuer** URL, e.g.
-   `https://auth.example.com/application/o/plexmcp-oauth/` (trailing slash included).
-
-### 2. Configure the server
-```env
-MCP_OAUTH_ENABLED=true
-MCP_OAUTH_ISSUER=https://auth.example.com/application/o/plexmcp-oauth/
-MCP_SERVER_URL=https://plexmcp.example.com
-MCP_OAUTH_AUDIENCE=<Client ID>        # optional, recommended
-```
-or the equivalent flags: `--oauth-enabled --oauth-issuer … --server-url … --oauth-audience …`.
-
-- `MCP_SERVER_URL` must be the public HTTPS URL clients reach; it also becomes the
-  allowed Host/Origin for DNS-rebinding protection.
-- `MCP_OAUTH_AUDIENCE` makes the server reject tokens minted for any *other* client of
-  the same provider. Set it to the Client ID from step 1. Leaving it unset disables audience validation for compatibility with existing deployments.
-
-### 3. Configure each client
-Use the Client ID and Secret from step 1 and one of these URLs:
-
-| Client | URL | Notes |
-|---|---|---|
-| Claude.ai / Claude Desktop | `https://plexmcp.example.com/sse` | Claude probes with a Streamable HTTP POST first and falls back to SSE automatically |
-| ChatGPT | `https://plexmcp.example.com/mcp` | Authentication: OAuth, paste Client ID/Secret |
-| Codex CLI | `codex mcp add plex --url https://plexmcp.example.com/mcp --oauth-client-id <id> --oauth-client-secret <secret>` | opens a browser for login |
-
-Clients configured with `/mcp` use Streamable HTTP; `/sse` uses the legacy transport.
-Both are protected identically.
-
-### Discovery Endpoints
-When OAuth is active, the following standard endpoints are exposed without
-authentication:
-- `/.well-known/oauth-protected-resource`
-- `/.well-known/oauth-authorization-server`
-- `/authorize` (redirects to the provider) and `/token` (proxied to the provider)
 
 ## Response Formats
 

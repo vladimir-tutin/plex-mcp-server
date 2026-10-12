@@ -1,7 +1,7 @@
 services:
   plex-mcp-server:
     build: .
-    image: ghcr.io/vladimir-tutin/plex-mcp-server:1.2.0
+    image: ghcr.io/vladimir-tutin/plex-mcp-server:latest
     restart: unless-stopped
     init: true
     ports:
