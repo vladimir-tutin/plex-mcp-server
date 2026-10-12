@@ -101,6 +101,12 @@ In ChatGPT's plugin settings, choose **Add custom MCP server**:
 - Authentication: **OAuth** if enabled on the server; otherwise **None**.
 - For a confidential OAuth client, open **Advanced OAuth settings** and supply your provider's Client ID and Client Secret. These are separate from your Plex token.
 
+![ChatGPT custom MCP server form with Advanced OAuth settings expanded](docs/images/chatgpt-oauth-settings.png)
+
+The screenshot shows where to find the OAuth settings if your server requires them.
+It uses a placeholder server URL, so discovery fails in this example. Use your real
+server URL and the token endpoint authentication method required by your provider.
+
 Register the exact ChatGPT callback URL with your OAuth provider. It can look like
 `https://chatgpt.com/connector/oauth/<callback-id>`; use the value requested by your
 connection, not the literal placeholder. Create the plugin, complete sign-in, and
