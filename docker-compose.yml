@@ -1,0 +1,14 @@
+services:
+  plex-mcp-server:
+    build: .
+    image: ghcr.io/vladimir-tutin/plex-mcp-server:1.2.0
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:${MCP_PUBLISHED_PORT:-3001}:3001"
+    env_file:
+      - .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

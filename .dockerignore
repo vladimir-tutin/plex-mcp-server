@@ -1,0 +1,9 @@
+**
+!Dockerfile
+!pyproject.toml
+!README.md
+!LICENSE
+!plex_mcp_server.py
+!watcher.py
+!modules/
+!modules/*.py

@@ -33,6 +33,49 @@ cd plex-mcp-server
 pip install -e .
 ```
 
+### Option 4: Docker Compose
+
+From a checkout of this repository, copy `.env.docker.example` to `.env` and set
+`PLEX_URL` and `PLEX_TOKEN`, then run:
+
+```bash
+docker compose pull
+docker compose up -d --no-build
+docker compose logs -f
+```
+
+The published image is available from `ghcr.io/vladimir-tutin/plex-mcp-server:1.2.0`
+for Linux amd64 and arm64. Docker Hub is not required. Version tags identify releases;
+`latest` follows the most recently published release image and `edge` follows main.
+To build your own image from the checked-out source, use `docker compose build --pull`
+and then `docker compose up -d --no-build` instead of pulling an image.
+
+The image runs as a non-root user. It defaults
+to Streamable HTTP at `/mcp`, with legacy `/sse` and `/messages/` also available.
+No Plex media volume is needed: the container connects to Plex over its API.
+Use a Plex address reachable from the container; `localhost` refers to the container itself.
+
+Compose publishes `127.0.0.1:3001` by default. For LAN clients or a reverse proxy on
+another machine, set `MCP_BIND_ADDRESS` to the Docker host's LAN address (or `0.0.0.0`)
+and choose `MCP_PUBLISHED_PORT`. Set `MCP_SERVER_URL` to the address clients use,
+such as `http://192.168.1.20:3001` or `https://plexmcp.example.com`, so Host validation
+accepts it. OAuth and additional Host/Origin settings use the same environment
+variables documented below. Keep `.env` private; it is excluded from the image.
+
+To build and run without Compose:
+
+```bash
+docker build -t plex-mcp-server:local .
+docker run -d --name plex-mcp-server --restart unless-stopped --init \
+  --env-file .env -p 127.0.0.1:3001:3001 plex-mcp-server:local
+```
+
+For standalone SSE, override the command with `--transport sse --host 0.0.0.0 --port 3001`.
+For stdio, use `docker run --rm -i --env-file .env plex-mcp-server:local --transport stdio`
+without publishing a port. To update a Compose deployment, select the desired image
+version in `docker-compose.yml`, then run `docker compose pull` and
+`docker compose up -d --no-build`.
+
 ## Configuration
 
 Set your Plex server URL and Token using one of these methods:
