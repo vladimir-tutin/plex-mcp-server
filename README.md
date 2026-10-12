@@ -79,6 +79,32 @@ Example for Claude Desktop (`%APPDATA%/Claude/claude_desktop_config.json`):
   }
 }
 ```
+#### Remote servers from stdio-only clients
+
+If your client only supports launching a local stdio process, use
+[`mcp-remote`](https://github.com/geelen/mcp-remote) to connect it to a remote Plex MCP
+server. Install Node.js (which provides `npx`) on the client machine, then use:
+
+```json
+{
+  "mcpServers": {
+    "plex": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://plexmcp.example.com/mcp"]
+    }
+  }
+}
+```
+
+Use `/mcp` when the server runs with `--transport streamable-http`. For an SSE
+deployment, use `/sse` instead. For plain HTTP on a trusted private network, append
+`"--allow-http"` to the arguments. If OAuth is enabled, follow the bridge's
+[OAuth configuration instructions](https://github.com/geelen/mcp-remote#readme),
+including any required client credentials and callback registration.
+
+Clients with native remote HTTP support can connect directly to `/mcp` and do not
+need Node.js, `npx`, or this bridge. The local stdio setup above also needs no bridge.
+
 ### 4. Claude Connector Installation
 
 Go to https://claude.ai/settings/connectors and add a new connector with the following settings:
