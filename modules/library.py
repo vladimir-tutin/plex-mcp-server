@@ -586,8 +586,10 @@ async def library_get_contents(
     
     Args:
         library_name: Name of the library to get contents from
-        unwatched: If True, only return unwatched items
-        watched: If True, only return watched items
+        unwatched: Use Plex's unwatched filter (shows may still have watched episodes).
+        watched: Only return played movies or shows with at least one played episode.
+            Partially watched shows are included; inspect watchStatus and watchedEpisodeCount.
+            Cannot be combined with unwatched. Watch state belongs to the Plex token's user.
         sort: Sort order (e.g., 'addedAt:desc', 'title:asc')
         offset: Number of items to skip (default: 0)
         limit: Maximum number of items to return (default: 50)
@@ -602,8 +604,13 @@ async def library_get_contents(
         studio: Filter by studio tag
     
     Returns:
-        JSON string listing items in the library with pagination metadata
+        JSON string listing items with media_id and pagination metadata. For shows,
+        watched means all available episodes are played; watchStatus distinguishes
+        unwatched, partial, and watched. Empty shows are unwatched.
     """
+    if watched and unwatched:
+        return json.dumps({"error": "watched and unwatched cannot both be true"})
+
     try:
         plex = connect_to_plex()
         base_url = plex._baseurl
@@ -707,6 +714,7 @@ async def library_get_contents(
                     watched = item.get('viewCount', 0) > 0
                     
                     result["items"].append({
+                        "media_id": item.get('ratingKey'),
                         "title": item.get('title', ''),
                         "year": year,
                         "duration": {
@@ -733,14 +741,21 @@ async def library_get_contents(
                     year = item.get('year', 'Unknown')
                     season_count = show_data.get('childCount', 0)
                     episode_count = show_data.get('leafCount', 0)
-                    watched = episode_count > 0 and show_data.get('viewedLeafCount', 0) == episode_count
+                    watched_episode_count = show_data.get('viewedLeafCount', 0)
+                    fully_watched = episode_count > 0 and watched_episode_count == episode_count
+                    watch_status = "watched" if fully_watched else (
+                        "partial" if watched_episode_count > 0 else "unwatched"
+                    )
                     
                     result["items"].append({
+                        "media_id": item.get('ratingKey'),
                         "title": item.get('title', ''),
                         "year": year,
                         "seasonCount": season_count,
                         "episodeCount": episode_count,
-                        "watched": watched
+                        "watchedEpisodeCount": watched_episode_count,
+                        "watchStatus": watch_status,
+                        "watched": fully_watched
                     })
             
             elif library_type == 'artist':
@@ -763,8 +778,9 @@ async def library_get_contents(
                     artist_tracks_data = await async_get_json(session, artist_tracks_url, headers)
                     
                     # Initialize artist data
-                    if artist_name not in artists_info:
-                        artists_info[artist_name] = {
+                    if artist_id not in artists_info:
+                        artists_info[artist_id] = {
+                            "media_id": artist_id,
                             "title": artist_name,
                             "albums": set(),
                             "trackCount": 0,
@@ -778,23 +794,24 @@ async def library_get_contents(
                     if 'MediaContainer' in artist_tracks_data and 'Metadata' in artist_tracks_data['MediaContainer']:
                         for track in artist_tracks_data['MediaContainer']['Metadata']:
                             # Count each track
-                            artists_info[artist_name]["trackCount"] += 1
+                            artists_info[artist_id]["trackCount"] += 1
                             
                             # Add album to set (to get unique album count)
                             if 'parentTitle' in track and track['parentTitle']:
-                                artists_info[artist_name]["albums"].add(track['parentTitle'])
+                                artists_info[artist_id]["albums"].add(track['parentTitle'])
                             
                             # Count views and skips
                             track_view_count += track.get('viewCount', 0)
                             track_skip_count += track.get('skipCount', 0)
                     
                     # Use the sum of track counts if they're non-zero, otherwise fall back to artist level counts
-                    artists_info[artist_name]["viewCount"] = track_view_count if track_view_count > 0 else orig_view_count
-                    artists_info[artist_name]["skipCount"] = track_skip_count if track_skip_count > 0 else orig_skip_count
+                    artists_info[artist_id]["viewCount"] = track_view_count if track_view_count > 0 else orig_view_count
+                    artists_info[artist_id]["skipCount"] = track_skip_count if track_skip_count > 0 else orig_skip_count
                 
                 # Convert album sets to counts and add to results
-                for artist_name, info in artists_info.items():
+                for info in artists_info.values():
                     result["items"].append({
+                        "media_id": info["media_id"],
                         "title": info["title"],
                         "albumCount": len(info["albums"]),
                         "trackCount": info["trackCount"],
@@ -806,6 +823,7 @@ async def library_get_contents(
                 # Generic handler for other types
                 for item in all_data.get('Metadata', []):
                     result["items"].append({
+                        "media_id": item.get('ratingKey'),
                         "title": item.get('title', '')
                     })
             

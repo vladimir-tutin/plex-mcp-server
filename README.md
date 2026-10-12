@@ -101,7 +101,29 @@ Tools for exploring and managing your Plex libraries.
 | `library_scan` | Scans a library for new files. | `library_name` |
 | `library_get_details` | Gets detailed information about a library. | `library_name` |
 | `library_get_recently_added` | Lists recently added items in a library. | `library_name`, `limit: int` |
-| `library_get_contents` | Lists all items in a library. | `library_name`, `limit: int` |
+| `library_get_contents` | Lists current library items with media IDs, filters, and pagination. | `library_name`, `watched: bool`, `unwatched: bool`, `offset: int`, `limit: int`, `sort`, `genre`, `year`, `content_rating`, `director`, `actor`, `writer`, `resolution`, `network`, `studio` |
+
+To list watched movies currently in your library (rather than playback history):
+
+```json
+{"library_name": "Movies", "watched": true, "offset": 0, "limit": 50}
+```
+
+Each result includes `media_id` (Plex's `ratingKey`) for looking up or deleting that
+specific item. The default page size is 50; increase `offset` to retrieve later pages.
+`totalItems` is the count matching the server-side filters, not just the current page.
+Watch state belongs to the user represented by `PLEX_TOKEN`.
+
+For TV libraries, `watched=true` includes **partially watched shows** with at least
+one played episode. A show's returned `watched` flag is true only when all its
+available episodes are played. `watchStatus` explicitly reports `unwatched`,
+`partial`, or `watched`, and `watchedEpisodeCount` gives the played count alongside
+`episodeCount`. Empty shows are reported as `unwatched`. For cleanup workflows,
+check `watchStatus == "watched"` before considering an entire show for deletion;
+the filter alone does not mean a show is complete.
+
+`unwatched=true` uses Plex's unwatched filter; for shows, it can include partially
+watched series with episodes remaining. Do not set both filters to true.
 
 ### Media Module
 Tools for searching, inspecting, and editing specific media items.
