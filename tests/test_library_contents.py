@@ -51,6 +51,41 @@ class LibraryContentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["items"][0]["watched"])
         self.assertEqual(parse_qs(urlparse(calls[1].args[1]).query)["unwatched"], ["1"])
 
+    async def test_movie_progress_is_independent_of_watched_state(self):
+        for played in (0, 2):
+            for position, expected_progress in ((0, 0), (3600000, 50)):
+                with self.subTest(played=played, position=position):
+                    result, calls = await self.contents("movie", [{
+                        "ratingKey": "42", "title": "Movie", "viewCount": played,
+                        "duration": 7200000, "viewOffset": position,
+                    }], watched=bool(played), unwatched=not played)
+                    item = result["items"][0]
+                    self.assertEqual(item["watched"], bool(played))
+                    self.assertEqual(item["inProgress"], position > 0)
+                    self.assertEqual(item["progressPercent"], expected_progress)
+                    # Progress comes from the library response, with no hub or
+                    # per-movie lookup needed to expose it.
+                    self.assertEqual(len(calls), 2)
+
+    async def test_movie_progress_handles_missing_and_boundary_metadata(self):
+        cases = [
+            ({"duration": 1000}, False, 0),
+            ({"duration": 1000, "viewOffset": None}, False, 0),
+            ({"viewOffset": 500}, True, None),
+            ({"duration": None, "viewOffset": 500}, True, None),
+            ({"duration": 0, "viewOffset": 500}, True, None),
+            ({"duration": 1000, "viewOffset": -100}, False, 0),
+            ({"duration": 1000, "viewOffset": 1000}, True, 100),
+            ({"duration": 1000, "viewOffset": 1500}, True, 100),
+            ({"duration": 3000, "viewOffset": 1000}, True, 33.3),
+        ]
+        for metadata, expected_in_progress, expected_percent in cases:
+            with self.subTest(metadata=metadata):
+                result, _ = await self.contents("movie", [{"ratingKey": "42", **metadata}])
+                item = result["items"][0]
+                self.assertEqual(item["inProgress"], expected_in_progress)
+                self.assertEqual(item["progressPercent"], expected_percent)
+
     async def test_show_states_include_partial_and_empty(self):
         items = [{"ratingKey": str(i), "title": str(i)} for i in range(4)]
         details = [{"MediaContainer": {"Metadata": [data]}} for data in [
@@ -111,6 +146,8 @@ class LibraryContentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("watched", tool.inputSchema["properties"])
         self.assertIn("Partially watched shows are included", tool.description)
         self.assertIn("watchStatus", tool.description)
+        self.assertIn("inProgress", tool.description)
+        self.assertIn("progressPercent", tool.description)
 
 
 if __name__ == "__main__":

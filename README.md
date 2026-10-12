@@ -114,6 +114,19 @@ specific item. The default page size is 50; increase `offset` to retrieve later 
 `totalItems` is the count matching the server-side filters, not just the current page.
 Watch state belongs to the user represented by `PLEX_TOKEN`.
 
+Movie results also include `inProgress` and `progressPercent`, based on Plex's
+saved playback offset, even if the movie is absent from Continue Watching.
+`inProgress` is true when that offset is positive; it does not mean the movie is
+currently playing. `progressPercent` is the saved position as a percentage of
+duration, rounded to one decimal and bounded to 0-100 (null if duration is unknown).
+A movie with no saved position has `inProgress: false` and, when duration is known,
+`progressPercent: 0`, even if it was previously watched.
+
+These fields are independent of `watched`: a movie can be both watched and in
+progress, for example during a rewatch. The `watched` and `unwatched` filters still
+use Plex's watched state, not saved progress. For cleanup, inspect `inProgress`
+as well as `watched` to avoid selecting movies with a saved playback position.
+
 For TV libraries, `watched=true` includes **partially watched shows** with at least
 one played episode. A show's returned `watched` flag is true only when all its
 available episodes are played. `watchStatus` explicitly reports `unwatched`,

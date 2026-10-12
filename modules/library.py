@@ -607,6 +607,9 @@ async def library_get_contents(
         JSON string listing items with media_id and pagination metadata. For shows,
         watched means all available episodes are played; watchStatus distinguishes
         unwatched, partial, and watched. Empty shows are unwatched.
+        Movies also include inProgress (a positive saved playback offset) and
+        progressPercent (0-100, or null if duration is unknown), independently of
+        watched and Continue Watching membership. This is not live playback status.
     """
     if watched and unwatched:
         return json.dumps({"error": "watched and unwatched cannot both be true"})
@@ -693,7 +696,7 @@ async def library_get_contents(
             if library_type == 'movie':
                 for item in all_data.get('Metadata', []):
                     year = item.get('year', 'Unknown')
-                    duration = item.get('duration', 0)
+                    duration = item.get('duration') or 0
                     # Convert duration from milliseconds to hours and minutes
                     hours, remainder = divmod(duration // 1000, 3600)
                     minutes, seconds = divmod(remainder, 60)
@@ -712,6 +715,13 @@ async def library_get_contents(
                     
                     # Check if watched
                     watched = item.get('viewCount', 0) > 0
+                    # Saved progress is independent of completed plays and may
+                    # remain even when Plex omits the movie from Continue Watching.
+                    playback_offset = max(0, item.get('viewOffset') or 0)
+                    progress_percent = (
+                        round(min(100, playback_offset / duration * 100), 1)
+                        if duration > 0 else None
+                    )
                     
                     result["items"].append({
                         "media_id": item.get('ratingKey'),
@@ -722,7 +732,9 @@ async def library_get_contents(
                             "minutes": minutes
                         },
                         "mediaInfo": media_info,
-                        "watched": watched
+                        "watched": watched,
+                        "inProgress": playback_offset > 0,
+                        "progressPercent": progress_percent
                     })
             
             elif library_type == 'show':
