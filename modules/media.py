@@ -217,6 +217,8 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
 
     Movie, episode and track results include watched, view_count, playback_offset_ms,
     in_progress and progress_percent for the selected user. Saved progress is not live playback.
+    Show, season, album and artist results include watched, watch_status (watched/partial/unwatched),
+    watched_count and total_count.
     """
     try:
         plex = await asyncio.to_thread(lambda: server_for_user(connect_to_plex(), username=username))
@@ -338,6 +340,8 @@ def get_media_details(media):
             "in_progress": offset > 0,
             "progress_percent": round(min(100, 100 * offset / duration), 1) if duration > 0 else None,
         })
+    elif media.type in ("show", "season", "album", "artist"):
+        details.update(_watch_state(media))
 
     # Add type-specific fields
     if media.type == 'movie':
@@ -538,6 +542,96 @@ def get_media_details(media):
         details['actors'] = [actor.tag for actor in media.actors]
     
     return details
+
+def _watch_state(media):
+    """Watched state of a single item, or episode/track counts for a container.
+
+    plexapi's isPlayed is not usable for containers: shows and seasons report True only
+    when fully watched, while albums and artists report True after any single play.
+    """
+    media_type = getattr(media, "type", None)
+    if media_type in ("show", "season", "album"):
+        watched_count = getattr(media, "viewedLeafCount", 0) or 0
+        total_count = getattr(media, "leafCount", 0) or 0
+    elif media_type == "artist":
+        # Album rows already carry per-album counts; listing tracks times out on large artists.
+        albums = media.albums()
+        watched_count = sum(getattr(album, "viewedLeafCount", 0) or 0 for album in albums)
+        total_count = sum(getattr(album, "leafCount", 0) or 0 for album in albums)
+    else:
+        watched = bool(media.isPlayed)
+        return {"watched": watched, "watch_status": "watched" if watched else "unwatched"}
+
+    if total_count > 0 and watched_count >= total_count:
+        status = "watched"
+    elif watched_count > 0:
+        status = "partial"
+    else:
+        status = "unwatched"
+    return {"watched": status == "watched", "watch_status": status,
+            "watched_count": watched_count, "total_count": total_count}
+
+@mcp.tool()
+async def media_set_watched_status(media_id: int, watched: bool, username: str = None) -> str:
+    """Mark a Plex media item as watched or unwatched.
+
+    Args:
+        media_id: Plex rating key returned by media_search or media_get_details
+        watched: True to mark the item watched, False to mark it unwatched
+        username: Optional Plex username or profile title; omit for the configured account. Failed access returns an error.
+
+    Movies, episodes and tracks change directly. Shows, seasons, albums and artists apply to
+    every episode or track: watched means all of them, unwatched means none, so a partly
+    watched one is always updated. Items already in the requested state are not rewritten,
+    and the result is re-read from Plex to confirm it was saved.
+    """
+    def update():
+        plex = server_for_user(connect_to_plex(), username=username)
+        try:
+            media = plex.fetchItem(media_id)
+        except NotFound:
+            media = None
+        if media is None:
+            return {"status": "error", "message": f"Media with ID {media_id} was not found"}
+
+        method = "markPlayed" if watched else "markUnplayed"
+        if not hasattr(media, "isPlayed") or not callable(getattr(media, method, None)):
+            return {
+                "status": "error",
+                "message": f"Media with ID {media_id} does not support watched status",
+                "media_id": getattr(media, "ratingKey", media_id),
+                "title": getattr(media, "title", "Unknown"),
+                "type": getattr(media, "type", "unknown"),
+            }
+
+        previous = _watch_state(media)
+        changed = previous["watch_status"] != ("watched" if watched else "unwatched")
+        if changed:
+            getattr(media, method)()
+
+        refreshed = plex.fetchItem(media_id)
+        current = _watch_state(refreshed)
+        result = {
+            "media_id": getattr(refreshed, "ratingKey", media_id),
+            "title": getattr(refreshed, "title", "Unknown"),
+            "type": getattr(refreshed, "type", "unknown"),
+            "previous_watched": previous["watched"],
+            "previous_watch_status": previous["watch_status"],
+            **current,
+        }
+        if current["watch_status"] != ("watched" if watched else "unwatched"):
+            return {"status": "error", "message": "Plex did not persist the requested watched status",
+                    "requested_watched": watched, **result}
+        return {"status": "success", "changed": changed,
+                "view_count": getattr(refreshed, "viewCount", 0) or 0, **result}
+
+    try:
+        return json.dumps(await asyncio.to_thread(update), indent=2)
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error setting watched status for media ID {media_id}: {str(e)}"
+        }, indent=2)
 
 @mcp.tool()
 async def media_edit_metadata(media_title: str, library_name: str = None, 

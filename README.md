@@ -456,17 +456,21 @@ Tools for searching, inspecting, and editing specific media items.
 |---------|-------------|------------|
 | `media_search` | Search for media across all libraries. | `query`, `library_name`, `content_type` |
 | `media_get_details` | Get comprehensive details for an item. | `media_title`, `library_name`, `media_id`, `username` |
+| `media_set_watched_status` | Mark an item watched or unwatched. Shows, seasons, albums and artists apply to every episode or track, including partly watched ones. | `media_id`, `watched`, `username` |
 | `media_edit_metadata` | Update tags, genres, summary, or title. | `media_title`, `library_name`, `new_title`, `new_summary`, `new_rating`, `new_release_date`, `new_genre`, `remove_genre`, `new_director`, `new_studio`, `new_tags` |
 | `media_delete` | Remove an item from Plex. | `media_title`, `library_name`, `media_id`, `username` |
 | `media_get_artwork` | Retrieve posters or background artwork. | `media_title`, `library_name`, `art_type: str` |
 | `media_set_artwork` | Set artwork from a local path or URL. | `media_title`, `library_name`, `poster_path`, `poster_url`, `background_path`, `background_url` |
 | `media_list_available_artwork` | List alternative artwork available for selection. | `media_title`, `library_name`, `art_type` |
 
-`library_get_contents` and `media_get_details` accept `username` for a Home or
-shared user, using the configured admin credentials. Omit it for your account.
+`library_get_contents`, `media_get_details` and `media_set_watched_status` accept
+`username` for a Home or shared user, using the configured admin credentials. Omit it
+for your account.
 Watched filters and saved playback progress belong to the selected user; failed
 access returns an error. Movie, episode and track details include `watched`,
-`view_count`, `playback_offset_ms`, `in_progress`, and `progress_percent`.
+`view_count`, `playback_offset_ms`, `in_progress`, and `progress_percent`. Show,
+season, album and artist details include `watched`, `watch_status` (`watched`, `partial` or
+`unwatched`), `watched_count`, and `total_count`.
 
 ### Watchlist Module
 
