@@ -7,6 +7,82 @@ import base64
 import os
 import json
 
+
+def _resolve_media_items(plex, media_title=None, media_id=None, library_name=None,
+                         year=None, libtype=None):
+    """Resolve a media item by rating key, or by title with optional narrowing.
+
+    Returns a ``(results, error)`` pair where exactly one side is truthy. ``error``
+    is a plain string; callers that answer in JSON wrap it themselves.
+
+    ``media_id`` is a direct fetch and is always unambiguous. For a title search,
+    ``library_name`` scopes it to one library and ``year`` narrows further; if
+    several items still match, an exact (case-insensitive) title match wins when
+    it is unique.
+
+    Note: :meth:`plexapi.library.LibrarySection.search` takes ``title=``, not
+    ``query=``. An unrecognised keyword becomes a filter field, and plexapi raises
+    ``NotFound('Unknown filter field ...')`` -- which is easy to misreport as a
+    missing library. ``PlexServer.search`` is a different API and does take ``query``.
+    """
+    if media_id is not None:
+        try:
+            return [plex.fetchItem(int(media_id))], None
+        except Exception as e:
+            return None, f"Could not find media with ID {media_id}: {str(e)}"
+
+    if not media_title:
+        return None, "Either media_id or media_title must be provided."
+
+    search_kwargs = {}
+    if year is not None:
+        search_kwargs['year'] = int(year)
+    if libtype is not None:
+        search_kwargs['libtype'] = libtype
+
+    if library_name:
+        try:
+            library = plex.library.section(library_name)
+        except NotFound:
+            available = [section.title for section in plex.library.sections()]
+            return None, (f"Library '{library_name}' not found. "
+                          f"Available libraries: {', '.join(available)}")
+        try:
+            results = library.search(title=media_title, **search_kwargs)
+        except NotFound as e:
+            return None, f"Error searching library '{library_name}': {str(e)}"
+    else:
+        results = plex.search(query=media_title)
+        if libtype is not None:
+            results = [r for r in results if getattr(r, 'type', None) == libtype]
+        if year is not None:
+            results = [r for r in results if getattr(r, 'year', None) == int(year)]
+
+    if not results:
+        return None, f"No media found matching '{media_title}'."
+
+    if len(results) > 1:
+        exact = [r for r in results
+                 if (getattr(r, 'title', '') or '').lower() == media_title.lower()]
+        if len(exact) == 1:
+            return exact, None
+        results = exact or results
+
+    return results, None
+
+
+def _ambiguous_media_error(media_title, results):
+    """Error text for an unresolved title, listing each candidate's media_id."""
+    candidates = [{
+        "media_id": getattr(r, 'ratingKey', None),
+        "title": getattr(r, 'title', None),
+        "year": getattr(r, 'year', None),
+        "type": getattr(r, 'type', None),
+        "library": getattr(r, 'librarySectionTitle', None),
+    } for r in results]
+    return (f"Multiple items match '{media_title}'. Pass media_id (or year) to "
+            f"disambiguate. Candidates: {json.dumps(candidates)}")
+
 @mcp.tool()
 async def media_search(query: str, content_type: str = None) -> str:
     """Search for media across all libraries.
@@ -243,7 +319,7 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
             if library_name:
                 try:
                     target_section = plex.library.section(library_name)
-                    results = target_section.search(query=media_title)
+                    results = target_section.search(title=media_title)
                 except Exception as e:
                     return json.dumps({"status": "error", "message": f"Error searching library '{library_name}': {str(e)}"}, indent=4)
             else:
@@ -258,15 +334,15 @@ async def media_get_details(media_title: str = None, media_id: int = None, libra
                     # Search in each music library
                     for library in music_libraries:
                         # Try searching for tracks
-                        track_results = library.search(query=media_title, libtype='track')
+                        track_results = library.search(title=media_title, libtype='track')
                         results.extend(track_results)
                         
                         # Try searching for albums
-                        album_results = library.search(query=media_title, libtype='album')
+                        album_results = library.search(title=media_title, libtype='album')
                         results.extend(album_results)
                         
                         # Try searching for artists
-                        artist_results = library.search(query=media_title, libtype='artist')
+                        artist_results = library.search(title=media_title, libtype='artist')
                         results.extend(artist_results)
             
             if not results:
@@ -634,7 +710,8 @@ async def media_set_watched_status(media_id: int, watched: bool, username: str =
         }, indent=2)
 
 @mcp.tool()
-async def media_edit_metadata(media_title: str, library_name: str = None, 
+async def media_edit_metadata(media_title: str = None, library_name: str = None,
+                        media_id: int = None, year: int = None,
                         new_title: str = None, new_summary: str = None, new_rating: float = None,
                         new_release_date: str = None,  # Add this parameter
                         new_genre: str = None, remove_genre: str = None,
@@ -643,8 +720,10 @@ async def media_edit_metadata(media_title: str, library_name: str = None,
     """Edit metadata for a specific media item.
     
     Args:
-        media_title: Title of the media to edit
+        media_title: Title of the media to edit (optional if media_id is provided)
         library_name: Optional library name to limit search to
+        media_id: Plex rating key, for an exact unambiguous match
+        year: Optional release year, to narrow a title search
         new_title: New title for the item
         new_summary: New summary/description
         new_rating: New rating (0-10)
@@ -657,23 +736,16 @@ async def media_edit_metadata(media_title: str, library_name: str = None,
     """
     try:
         plex = connect_to_plex()
-        
-        # Search for the media
-        if library_name:
-            try:
-                library = plex.library.section(library_name)
-                results = library.search(query=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
-        else:
-                results = plex.search(query=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
+
+        results, error = _resolve_media_items(
+            plex, media_title=media_title, media_id=media_id,
+            library_name=library_name, year=year)
+        if error:
+            return error
+
         if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
-        
+            return _ambiguous_media_error(media_title, results)
+
         media = results[0]
         changes_made = []
         
@@ -831,7 +903,7 @@ async def media_get_artwork(media_title: str = None, media_id: int = None, libra
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
+                    results = library.search(title=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
             else:
@@ -1021,7 +1093,7 @@ async def media_delete(media_title: str = None, media_id: int = None, library_na
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
+                    results = library.search(title=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
             else:
@@ -1128,15 +1200,18 @@ async def media_delete(media_title: str = None, media_id: int = None, library_na
         return json.dumps({"error": f"Error deleting media: {str(e)}"}, indent=4)
 
 @mcp.tool()
-async def media_set_artwork(media_title: str, library_name: str = None,
-                          art_type: str = "poster", 
+async def media_set_artwork(media_title: str = None, library_name: str = None,
+                          media_id: int = None, year: int = None,
+                          art_type: str = "poster",
                           filepath: str = None, url: str = None,
                           lock: bool = False) -> str:
     """Set artwork for a specific media item.
     
     Args:
-        media_title: Title of the media to set artwork for
+        media_title: Title of the media to set artwork for (optional if media_id is provided)
         library_name: Optional library name to limit search to
+        media_id: Plex rating key, for an exact unambiguous match
+        year: Optional release year, to narrow a title search
         art_type: Type of artwork to set (poster, background/art, logo)
         filepath: Path to the local image file
         url: URL to the image file
@@ -1173,23 +1248,16 @@ async def media_set_artwork(media_title: str, library_name: str = None,
         }
         
         plex = connect_to_plex()
-        
-        # Search for the media
-        if library_name:
-            try:
-                library = plex.library.section(library_name)
-                results = library.search(query=media_title)
-            except NotFound:
-                return f"Library '{library_name}' not found."
-        else:
-            results = plex.search(query=media_title)
-        
-        if not results:
-            return f"No media found matching '{media_title}'."
-        
+
+        results, error = _resolve_media_items(
+            plex, media_title=media_title, media_id=media_id,
+            library_name=library_name, year=year)
+        if error:
+            return error
+
         if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
-        
+            return _ambiguous_media_error(media_title, results)
+
         media = results[0]
         
         # Check if the object supports this art type
@@ -1270,7 +1338,7 @@ async def media_list_available_artwork(media_title: str = None, media_id: int = 
             if library_name:
                 try:
                     library = plex.library.section(library_name)
-                    results = library.search(query=media_title)
+                    results = library.search(title=media_title)
                 except NotFound:
                     return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
             else:
